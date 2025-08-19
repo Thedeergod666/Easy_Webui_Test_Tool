@@ -15,7 +15,7 @@ PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
 # 检查 Python 环境
 echo "正在检查 Python 环境..."
 if ! command -v python3 &> /dev/null; then
-    echo "[错误] 未在本机找到 python3。请先安装 Python 3.8+。"
+    echo "[错误] 未在本机找到 python3。请先安装 Python 3.11+。"
     exit 1
 fi
 echo "Python 3 已安装。"
