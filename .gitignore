@@ -1,0 +1,31 @@
+# 忽略Python虚拟环境
+/venv/
+/.venv/
+
+#忽略code cli配置文件
+.env
+.crush.json
+CRUSH.md
+.crush
+.roomodes
+
+# 忽略Python缓存文件
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 忽略编辑器和IDE的配置文件
+.vscode/
+.idea/
+
+# 忽略测试报告和日志（如果需要版本控制可以去掉）
+/test_data/*
+/reports/report*.html
+/reports/*report.html
+/reports/report*/
+*.log
+*.png
+
+# 忽略其他不需要的文件
+/demo_easytest/
+/framework/utils/Keywords copy.py
