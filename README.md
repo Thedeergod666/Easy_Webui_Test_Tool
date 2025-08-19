@@ -44,32 +44,32 @@
 - 强制等待（sleep）在无头模式下自动跳过，并记录总等待时间
 
 #### 目录文件介绍
-**playwright_ui**
-	.venv  `虚拟环境，由install.bat自动生成`
-	docs `使用文档`
-	framework  `架构`
-		utils  `其他工具 `
-		Keywords.py  `关键字`
-	page_objects  `后续升级POM用`
-	reports  `报告，脚本生成的报告存放的地方，记得用浏览器打开`
-		report_README.md  `报告使用说明`
-	test_data  `存放测试文件、配置浏览器打开方式`
-		test_config.json  `配置浏览器打开方式，测试数据文件路径`
-	tests  `具体实现脚本`
-		test_flows  `测试/调试代码`
-			test_flow_by_function.py  `整体测试快速调试用，已弃用`
-			test_flow_by_function_json.py  `json解析、bat脚本直接调用`
-			test_steps_by_session.py  `单步测试快速调试用，已弃用`
-			test_steps_by_session_json.py  `json解析、bat脚本直接调用`
-		conftest.py  `脚本测试配置`
-	—————————————文件夹/文件分割线—————————————
-	.gitignore  `忽略文件`
-	requirements.txt  `待安装库`
-	install.bat  #windows `环境安装/更新 第一步，双击这个文件`
-	main.bat  #windows `启动测试脚本 后续只需双击这里即可开始测试`
-	install.sh  #macos #linux `环境安装/更新 第一步，双击这个文件`
-	main.sh  #macos #linux`启动测试脚本 后续只需双击这里即可开始测试`
-	README.md  `读我`
+*   `.` (项目根目录)
+    *   `.venv/` - 虚拟环境，由 `install.bat` / `install.sh` 自动生成。
+    *   `docs/` - 项目使用文档。
+    *   `framework/` - **自动化测试架构核心目录**。
+        *   `Keywords.py` - 核心测试关键字，封装原子操作。
+        *   `page_objects/` - 后续考虑升级为 Page Object Model (POM) 设计模式的存放地。
+        *   `test_data/` - 存放测试数据文件和相关配置。
+            *   `test_config.json` - 配置浏览器打开方式及测试数据文件路径。
+        *   `utils/` - 架构辅助工具。
+    *   `reports/` - **测试报告存放目录**。
+        *   生成的所有测试报告会保存到这里，记得用浏览器打开。
+        *   `report_README.md` - 报告使用说明。
+    *   `tests/` - **具体测试用例实现目录**。
+        *   `conftest.py` - pytest 脚本测试配置文件。
+        *   `test_flows/` - **测试/调试代码流**。
+            *   `test_flow_by_function.py` - (已弃用) 整体测试快速调试用。
+            *   `test_flow_by_function_json.py` - JSON 解析，专供 `bat` / `sh` 脚本直接调用。
+            *   `test_steps_by_session.py` - (已弃用) 单步测试快速调试用。
+            *   `test_steps_by_session_json.py` - JSON 解析，专供 `bat` / `sh` 脚本直接调用。
+    *   `.gitignore` - Git 忽略文件配置。
+    *   `requirements.txt` - Python 第三方库依赖清单。
+    *   `install.bat` - **[Windows 环境]** 安装/更新脚本，双击运行即可。
+    *   `main.bat` - **[Windows 环境]** 启动测试脚本，双击运行即可开始测试。
+    *   `install.sh` - **[macOS / Linux 环境]** 安装/更新脚本，双击运行即可。
+    *   `main.sh` - **[macOS / Linux 环境]** 启动测试脚本，双击运行即可开始测试。
+    *   `README.md` - 项目说明文档 (即当前文件)。
 #### 脚本介绍
 - install.bat / install.sh
 	- 自动根据requirements.txt使用清华源镜像安装脚本所需虚拟环境
