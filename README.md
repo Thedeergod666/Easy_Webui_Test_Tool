@@ -1,6 +1,10 @@
 # WEBUI自动化测试框架使用指南
 这是一个基于 [Playwright](https://playwright.dev/python/) 和 [Pytest](https://docs.pytest.org/) 构建的 **关键字+数据驱动的 Web UI 自动化测试框架**。
 其核心目标是通过简洁的 Excel 表格来管理和执行复杂的 Web UI 测试流程，适用于各类平台的回归和冒烟测试，显著降低自动化测试的门槛和维护成本。
+中文wiki：
+https://zread.ai/Thedeergod666/Easy_Webui_Test_Tool
+English wiki：
+https://deepwiki.com/Thedeergod666/Easy_Webui_Test_Tool
 ## 核心特色
 * **极简用例编写**：测试步骤存储在 **Excel** 中，业务人员也能轻松参与。
 * **强大的 Playwright 集成**：充分利用 Playwright 的跨浏览器支持、自动等待、强大的 `get_by_role` 语义化定位等特性。
