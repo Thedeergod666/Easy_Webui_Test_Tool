@@ -20,8 +20,12 @@ def main():
         print(f"[非交互模式] 执行: {choice_input}")
         
         # 检查是否是清理命令
-        if mode_args[0] == "7":
+        if mode_args[0] == "8":
             cleanup_temp_files(ci_mode=True)
+        # 检查是否是用例查看命令
+        elif mode_args[0] == "7":
+            from framework.utils.ui.main_menu import view_test_cases
+            view_test_cases()
         # 检查是否是Codegen命令
         elif mode_args[0] == "5":
             # 从现有Python文件转换

@@ -9,6 +9,63 @@ if project_root not in sys.path:
 
 from framework.utils.run_tests.runner import run_tests
 from framework.utils.ui.codegen_ui import convert_from_file, record_and_convert
+import json
+
+def view_test_cases():
+    """查看test_config.json中的测试用例"""
+    # 修正路径计算，确保指向项目根目录下的test_data文件夹
+    actual_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+    config_path = os.path.join(actual_project_root, 'test_data', 'test_config.json')
+    
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        print(f"[错误] 找不到配置文件: {config_path}")
+        input("按回车键继续...")
+        return
+    except json.JSONDecodeError:
+        print(f"[错误] 配置文件格式错误: {config_path}")
+        input("按回车键继续...")
+        return
+    
+    test_flows = config.get('test_flows', [])
+    if not test_flows:
+        print("[信息] 配置文件中没有找到测试用例")
+        input("按回车键继续...")
+        return
+    
+    print("\n=== test_config.json 用例快速查看 ===")
+    print(f"总共找到 {len(test_flows)} 个测试用例:")
+    print()
+    
+    total_count = len(test_flows)
+    for i, flow in enumerate(test_flows, 1):
+        # 计算负编号
+        negative_index = i - total_count - 1
+        
+        # 获取状态图标
+        status_icon = "✓" if flow.get('enabled', True) else "✗"
+        
+        # 获取浏览器类型
+        browser = flow.get('browser', 'chromium')
+        
+        # 获取描述
+        description = flow.get('description', '无描述')
+        
+        # 获取文件路径和Sheet名称
+        file_path = flow.get('file_path', '未知文件')
+        sheet_name = flow.get('sheet_name', '未知Sheet')
+        
+        # 显示用例信息
+        print(f"  {status_icon} [{i}/{negative_index}] {description}")
+        print(f"      文件: {file_path}")
+        print(f"      Sheet: {sheet_name}")
+        print(f"      浏览器: {browser}")
+        print()
+    
+    print("=== 用例列表结束 ===")
+    input("按回车键继续...")
 
 def show_main_menu():
     """显示主菜单"""
@@ -33,14 +90,15 @@ def show_main_menu():
         print("    6. 启动Playwright录制并转换")
         print()
         print("  其他工具:")
-        print("    7. 清理残留临时文件")
+        print("    7. test_config.json用例快速查看")
+        print("    8. 清理残留临时文件")
         print()
         print("-" * 60)
         print("  q. 退出")
         print("-" * 60)
         print()
         
-        choice_input = input("请输入您的选择 [1, 2, 3, 4, 5, 6, 7, q]: ").strip().lower()
+        choice_input = input("请输入您的选择 [1, 2, 3, 4, 5, 6, 7, 8, q]: ").strip().lower()
         
         if not choice_input:
             print("无效输入，请重试...")
@@ -92,6 +150,16 @@ def show_main_menu():
                 print("退出脚本。")
                 break
         elif choice == "7":
+            # test_config.json用例快速查看
+            view_test_cases()
+            
+            # 执行完功能后询问是否返回主菜单
+            print("\n功能执行完成。")
+            cont = input("是否返回主菜单？(y/回车继续，其他输入退出): ").strip().lower()
+            if cont not in ["y", "Y", "yes", "是", ""]:  # 添加空字符串表示回车继续
+                print("退出脚本。")
+                break
+        elif choice == "8":
             # 清理残留临时文件
             from framework.utils.run_tests.runner import cleanup_temp_files
             cleanup_temp_files(ci_mode=False)
