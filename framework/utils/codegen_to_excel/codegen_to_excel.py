@@ -27,6 +27,7 @@ class CodeGenParser(ast.NodeVisitor):
         self.next_page_index = 2  # 下一个页面的索引
         self.processed_nodes = 0
         self.total_nodes = total_nodes
+        self.next_case_number = 0  # 下一个可用的case编号
 
     def update_progress(self):
         """更新进度条显示"""
@@ -206,12 +207,89 @@ class CodeGenParser(ast.NodeVisitor):
         return locator_full_str, data_content
 
     def create_base_row(self, keyword, action_name=''):
+        case_number = self.next_case_number
+        self.next_case_number += 1
         return {
-            '编号': f'case_{len(self.steps) + 1:03d}',
+            '编号': f'case_{case_number:03d}',
             '关键字': keyword, '验证类型': '', '定位方式': '', '目标对象': '',
             '数据内容': '', '描述': f'自动生成: {action_name}', '执行状态': '', '补充说明': ''
         }
         
+def apply_excel_styles(workbook, worksheet, df):
+    """应用Excel样式"""
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    
+    # 定义样式
+    header_font = Font(name='微软雅黑', size=14, bold=True)
+    header_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+    normal_font = Font(name='微软雅黑', size=11)
+    header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=False)  # 首行不自动换行
+    normal_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    green_fill = PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid')
+    
+    # 定义边框
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    # 设置第一行样式
+    for col in range(1, len(df.columns) + 1):
+        cell = worksheet.cell(row=1, column=col)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment  # 首行不自动换行
+        cell.border = thin_border
+    
+    # 设置其他行样式
+    for row in range(2, len(df) + 2):
+        for col in range(1, len(df.columns) + 1):
+            cell = worksheet.cell(row=row, column=col)
+            cell.font = normal_font
+            cell.alignment = normal_alignment
+            cell.border = thin_border
+            
+            # 关键字列内容为open时填充绿色
+            if col == 2 and cell.value == 'open':  # 第2列是'关键字'列
+                cell.fill = green_fill
+    
+    # 设置行高
+    worksheet.row_dimensions[1].height = 34.45  # 第一行行高34.45磅
+    for row in range(2, len(df) + 2):
+        worksheet.row_dimensions[row].height = 28.8  # 其他行行高28.8磅
+    
+    # 自动调整列宽，最宽不超过56字符，最窄不低于完整展现首行文字所需的宽度
+    for col in range(1, len(df.columns) + 1):
+        column = get_column_letter(col)
+        
+        # 计算列标题的长度
+        header_length = len(str(df.columns[col-1]))
+        
+        # 计算列数据的最大长度
+        max_data_length = 0
+        for cell in worksheet[column][1:]:  # 从第二行开始计算数据长度
+            try:
+                cell_length = len(str(cell.value))
+                if cell_length > max_data_length:
+                    max_data_length = cell_length
+            except:
+                pass
+        
+        # 取列标题和列数据的最大长度
+        max_length = max(header_length, max_data_length)
+        
+        # 限制宽度在合理范围内：最小为列标题长度，最大为56字符
+        adjusted_width = max(header_length, min(max_length + 2, 56))
+        worksheet.column_dimensions[column].width = adjusted_width
+    
+    # 首行冻结
+    worksheet.freeze_panes = 'A2'
+    
+    return workbook, worksheet
+
 def convert_py_to_excel(py_file, output_excel, sheet_name='Sheet1'):
     """主转换函数"""
     with open(py_file, 'r', encoding='utf-8') as f:
@@ -233,6 +311,10 @@ def convert_py_to_excel(py_file, output_excel, sheet_name='Sheet1'):
         print("[错误] 未能从Python文件中解析出任何测试步骤。")
         return False
     
+    # 重新为所有步骤分配编号，确保编号是连续且正确的
+    for i, step in enumerate(parser.steps):
+        step['编号'] = f'case_{i:03d}'
+    
     df = pd.DataFrame(parser.steps)
     df = df[['编号', '关键字', '验证类型', '定位方式', '目标对象', '数据内容', '描述', '执行状态', '补充说明']]
     
@@ -242,7 +324,6 @@ def convert_py_to_excel(py_file, output_excel, sheet_name='Sheet1'):
         from openpyxl import load_workbook
         wb = load_workbook(output_excel)
         existing_sheets = wb.sheetnames
-        wb.close()
         
         # 如果Sheet名称重复，添加后缀
         final_sheet_name = sheet_name
@@ -255,6 +336,12 @@ def convert_py_to_excel(py_file, output_excel, sheet_name='Sheet1'):
         try:
             with pd.ExcelWriter(output_excel, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                 df.to_excel(writer, index=False, sheet_name=final_sheet_name)
+                
+                # 应用样式
+                wb = load_workbook(output_excel)
+                ws = wb[final_sheet_name]
+                apply_excel_styles(wb, ws, df)
+                wb.save(output_excel)
         except PermissionError:
             print(f"[错误] 无法写入文件 '{output_excel}'，可能是文件正在被其他程序使用。请关闭文件后重试。")
             return False, final_sheet_name
@@ -265,6 +352,13 @@ def convert_py_to_excel(py_file, output_excel, sheet_name='Sheet1'):
         # 如果文件不存在，创建新文件
         df.to_excel(output_excel, index=False, sheet_name=sheet_name)
         final_sheet_name = sheet_name
+        
+        # 应用样式
+        from openpyxl import load_workbook
+        wb = load_workbook(output_excel)
+        ws = wb[sheet_name]
+        apply_excel_styles(wb, ws, df)
+        wb.save(output_excel)
     
     return True, final_sheet_name
 
