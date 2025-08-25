@@ -93,7 +93,8 @@ https://deepwiki.com/Thedeergod666/Easy_Webui_Test_Tool
     4. Session模式-All (硬断言，执行所有启用的流程)
     5. 从现有Python文件转换成excel
     6. 启动Playwright录制并转换excel
-    7. 清理残留临时文件
+    7. test_config.json用例快速查看
+    8. 清理残留临时文件
 #### 目前playwright-codegen内录**不支持**或录制的功能
 	视频播放：不支持html5，无法支持bilibili、抖音这类的视频网站播放
 	bar类控件精准点击：
