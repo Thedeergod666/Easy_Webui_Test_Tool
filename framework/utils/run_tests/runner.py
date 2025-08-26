@@ -185,6 +185,96 @@ def run_tests(choice_input, ci_mode=False):
         test_file_py = os.path.join(project_root, 'tests', 'test_flows', 'test_steps_by_session_json.py')
         for browser, flows in grouped_flows.items():
             run_pytest_batch(browser, flows, test_file_py, ci_mode=ci_mode)
+            
+    elif choice == "5":  # Function模式-Sheets
+        # Function模式-Sheets执行指定Excel文件中的所有sheet
+        selected_flow = get_flow_by_index(test_flows, flow_index)
+        if selected_flow is None:
+            print("未找到指定的测试流程。")
+            return
+            
+        # 获取Excel文件路径
+        excel_file_path = selected_flow.get("file_path")
+        if not excel_file_path:
+            print("指定的测试流程中没有配置Excel文件路径。")
+            return
+            
+        # 处理相对路径
+        if not os.path.isabs(excel_file_path):
+            excel_file_path = os.path.join(project_root, excel_file_path)
+            
+        # 检查文件是否存在
+        if not os.path.exists(excel_file_path):
+            print(f"Excel文件不存在: {excel_file_path}")
+            return
+            
+        # 获取Excel文件中的所有sheet名称
+        import pandas as pd
+        try:
+            excel_file = pd.ExcelFile(excel_file_path)
+            sheet_names = excel_file.sheet_names
+        except Exception as e:
+            print(f"读取Excel文件失败: {e}")
+            return
+            
+        # 为每个sheet创建测试流程配置
+        sheet_flows = []
+        for sheet_name in sheet_names:
+            sheet_flow = selected_flow.copy()
+            sheet_flow["sheet_name"] = sheet_name
+            sheet_flow["description"] = f"{selected_flow.get('description', '未知流程')} - Sheet: {sheet_name}"
+            sheet_flows.append(sheet_flow)
+            
+        # 按浏览器分组并执行
+        grouped_flows = group_flows_by_browser(sheet_flows)
+        test_file_py = os.path.join(project_root, 'tests', 'test_flows', 'test_flow_by_function_json.py')
+        for browser, flows in grouped_flows.items():
+            run_pytest_batch(browser, flows, test_file_py, ci_mode=ci_mode)
+            
+    elif choice == "6":  # Session模式-Sheets
+        # Session模式-Sheets执行指定Excel文件中的所有sheet
+        selected_flow = get_flow_by_index(test_flows, flow_index)
+        if selected_flow is None:
+            print("未找到指定的测试流程。")
+            return
+            
+        # 获取Excel文件路径
+        excel_file_path = selected_flow.get("file_path")
+        if not excel_file_path:
+            print("指定的测试流程中没有配置Excel文件路径。")
+            return
+            
+        # 处理相对路径
+        if not os.path.isabs(excel_file_path):
+            excel_file_path = os.path.join(project_root, excel_file_path)
+            
+        # 检查文件是否存在
+        if not os.path.exists(excel_file_path):
+            print(f"Excel文件不存在: {excel_file_path}")
+            return
+            
+        # 获取Excel文件中的所有sheet名称
+        import pandas as pd
+        try:
+            excel_file = pd.ExcelFile(excel_file_path)
+            sheet_names = excel_file.sheet_names
+        except Exception as e:
+            print(f"读取Excel文件失败: {e}")
+            return
+            
+        # 为每个sheet创建测试流程配置
+        sheet_flows = []
+        for sheet_name in sheet_names:
+            sheet_flow = selected_flow.copy()
+            sheet_flow["sheet_name"] = sheet_name
+            sheet_flow["description"] = f"{selected_flow.get('description', '未知流程')} - Sheet: {sheet_name}"
+            sheet_flows.append(sheet_flow)
+            
+        # 按浏览器分组并执行
+        grouped_flows = group_flows_by_browser(sheet_flows)
+        test_file_py = os.path.join(project_root, 'tests', 'test_flows', 'test_steps_by_session_json.py')
+        for browser, flows in grouped_flows.items():
+            run_pytest_batch(browser, flows, test_file_py, ci_mode=ci_mode)
 
 def cleanup_temp_files(ci_mode=False):
     """清理残留的临时文件"""

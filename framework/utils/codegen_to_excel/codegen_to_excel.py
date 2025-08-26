@@ -336,12 +336,12 @@ def convert_py_to_excel(py_file, output_excel, sheet_name='Sheet1'):
         try:
             with pd.ExcelWriter(output_excel, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                 df.to_excel(writer, index=False, sheet_name=final_sheet_name)
-                
-                # 应用样式
-                wb = load_workbook(output_excel)
-                ws = wb[final_sheet_name]
-                apply_excel_styles(wb, ws, df)
-                wb.save(output_excel)
+            
+            # 应用样式（在pd.ExcelWriter上下文管理器外部）
+            wb = load_workbook(output_excel)
+            ws = wb[final_sheet_name]
+            apply_excel_styles(wb, ws, df)
+            wb.save(output_excel)
         except PermissionError:
             print(f"[错误] 无法写入文件 '{output_excel}'，可能是文件正在被其他程序使用。请关闭文件后重试。")
             return False, final_sheet_name

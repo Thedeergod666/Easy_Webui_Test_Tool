@@ -84,21 +84,25 @@ def show_main_menu():
         print("    3. Session模式-Browsers (硬断言，指定流程在所有浏览器上执行)")
         print("       示例: 3 1 (第一个流程在所有浏览器上执行), 3 -1 (最后一个流程在所有浏览器上执行)")
         print("    4. Session模式-All (硬断言，执行所有启用的流程)")
+        print("    5. Function模式-Sheets (软断言，执行指定Excel文件中的所有sheet)")
+        print("       示例: 5 1 (执行第一个流程Excel文件中的所有sheet)")
+        print("    6. Session模式-Sheets (硬断言，执行指定Excel文件中的所有sheet)")
+        print("       示例: 6 1 (执行第一个流程Excel文件中的所有sheet)")
         print()
         print("  Codegen2Excel工具:")
-        print("    5. 从现有Python文件转换")
-        print("    6. 启动Playwright录制并转换")
+        print("    7. 从现有Python文件转换")
+        print("    8. 启动Playwright录制并转换")
         print()
         print("  其他工具:")
-        print("    7. test_config.json用例快速查看")
-        print("    8. 清理残留临时文件")
+        print("    9. test_config.json用例快速查看")
+        print("    10. 清理残留临时文件")
         print()
         print("-" * 60)
         print("  q. 退出")
         print("-" * 60)
         print()
         
-        choice_input = input("请输入您的选择 [1, 2, 3, 4, 5, 6, 7, 8, q]: ").strip().lower()
+        choice_input = input("请输入您的选择 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, q]: ").strip().lower()
         
         if not choice_input:
             print("无效输入，请重试...")
@@ -116,7 +120,7 @@ def show_main_menu():
             input("按回车键继续...")
             continue
             
-        if choice in ["1", "2", "3", "4"]:
+        if choice in ["1", "2", "3", "4", "5", "6"]:
             # 测试执行模式
             if index:
                 run_tests(f"{choice} {index}", ci_mode=False)
@@ -129,7 +133,7 @@ def show_main_menu():
             if cont not in ["y", "Y", "yes", "是", ""]:  # 添加空字符串表示回车继续
                 print("退出脚本。")
                 break
-        elif choice == "5":
+        elif choice == "7":
             # Codegen: 从现有Python文件转换
             convert_from_file()
             
@@ -139,7 +143,7 @@ def show_main_menu():
             if cont not in ["y", "Y", "yes", "是", ""]:  # 添加空字符串表示回车继续
                 print("退出脚本。")
                 break
-        elif choice == "6":
+        elif choice == "8":
             # Codegen: 启动Playwright录制并转换
             record_and_convert()
             
@@ -149,7 +153,7 @@ def show_main_menu():
             if cont not in ["y", "Y", "yes", "是", ""]:  # 添加空字符串表示回车继续
                 print("退出脚本。")
                 break
-        elif choice == "7":
+        elif choice == "9":
             # test_config.json用例快速查看
             view_test_cases()
             
@@ -159,7 +163,7 @@ def show_main_menu():
             if cont not in ["y", "Y", "yes", "是", ""]:  # 添加空字符串表示回车继续
                 print("退出脚本。")
                 break
-        elif choice == "8":
+        elif choice == "10":
             # 清理残留临时文件
             from framework.utils.run_tests.runner import cleanup_temp_files
             cleanup_temp_files(ci_mode=False)
