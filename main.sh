@@ -13,6 +13,6 @@ fi
 
 # 启动主菜单
 echo "========================================"
-echo "  自动化测试与Codegen工具主菜单 (Linux/macOS)"
+echo "   Easy_Webui_Test_Tool (Linux/macOS)"
 echo "========================================"
 python3 framework/utils/main.py "$@"

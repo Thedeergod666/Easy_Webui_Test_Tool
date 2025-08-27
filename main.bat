@@ -11,6 +11,6 @@ if exist ".venv\Scripts\activate.bat" (
 
 REM 启动主菜单
 echo ========================================
-echo   自动化测试与Codegen工具主菜单 (Windows)
+echo     Easy_Webui_Test_Tool (Windows)
 echo ========================================
 python framework/utils/main.py %*

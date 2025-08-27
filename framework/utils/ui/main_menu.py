@@ -72,18 +72,20 @@ def show_main_menu():
     while True:
         os.system('cls' if os.name == 'nt' else 'clear')  # 清屏
         print("=" * 60)
-        print("                   自动化测试与Codegen工具")
+        print("                    Easy_Webui_Test_Tool")
         print("=" * 60)
         print()
         print("  请选择要执行的操作:")
         print()
         print("  测试执行模式:")
         print("    1. Function模式 (软断言，执行所有启用的流程)")
+        print()
         print("    2. Session模式  (硬断言，执行指定启用的流程)")
         print("       示例: 2 1 (执行第一个流程), 2 -1 (执行最后一个流程)")
         print("    3. Session模式-Browsers (硬断言，指定流程在所有浏览器上执行)")
         print("       示例: 3 1 (第一个流程在所有浏览器上执行), 3 -1 (最后一个流程在所有浏览器上执行)")
         print("    4. Session模式-All (硬断言，执行所有启用的流程)")
+        print()
         print("    5. Function模式-Sheets (软断言，执行指定Excel文件中的所有sheet)")
         print("       示例: 5 1 (执行第一个流程Excel文件中的所有sheet)")
         print("    6. Session模式-Sheets (硬断言，执行指定Excel文件中的所有sheet)")
@@ -102,7 +104,7 @@ def show_main_menu():
         print("-" * 60)
         print()
         
-        choice_input = input("请输入您的选择 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, q]: ").strip().lower()
+        choice_input = input("请输入您的选择 [1-10, q]: ").strip().lower()
         
         if not choice_input:
             print("无效输入，请重试...")
