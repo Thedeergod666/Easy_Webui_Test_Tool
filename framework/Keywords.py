@@ -226,15 +226,27 @@ class Keywords:
         [关键字] 执行一个完整的、从Inspector复制的Playwright expect断言表达式。
         提供了极高的灵活性来处理复杂断言。
         目标对象: 形如 'expect(page.locator("...")).to_have_text("...")' 的字符串。
-                  可用变量: page, pages (页面列表), expect, re。
+                  可用变量: page, pages (页面列表), page1, page2, ... (页面对象), expect, re。
         """
         expression = kwargs.get('目标对象')
         description = kwargs.get('描述', '执行Codegen断言')
+        
+        # 构建安全执行作用域
         safe_scope = {
-            "expect": self.expect, "re": re,
-            "page": self.context.pages[0],
-            "pages": self.context.pages
+            "expect": self.expect,
+            "re": re,
+            "page": self.context.pages[0],  # 保持向后兼容性
+            "pages": self.context.pages      # 保持向后兼容性
         }
+        
+        # 动态添加页面变量，如 page1, page2, page3 等
+        # 这些变量对应 self.context.pages 列表中的页面对象
+        for i, page_obj in enumerate(self.context.pages):
+            if i == 0:
+                # page0 和 page 都指向第一个页面，保持向后兼容性
+                safe_scope["page0"] = page_obj
+            safe_scope[f"page{i+1}"] = page_obj
+        
         print(f"执行 [{description}]: {expression}")
         try:
             eval(expression, safe_scope)
