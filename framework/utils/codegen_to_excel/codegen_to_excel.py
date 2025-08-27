@@ -139,36 +139,7 @@ class CodeGenParser(ast.NodeVisitor):
             self.handle_expect_call(call_node, original_code)
             return
 
-        # 2. 检查是否是页面跳转语句，如 page1.goto(...)
-        # 这类语句需要放在相应的断言之前
-        if (isinstance(call_node, ast.Call) and
-            isinstance(call_node.func, ast.Attribute) and
-            call_node.func.attr == 'goto' and
-            isinstance(call_node.func.value, ast.Name) and
-            call_node.func.value.id in self.page_vars):
-            
-            # 创建页面跳转步骤
-            page_var = call_node.func.value.id
-            row = self.create_base_row('open', 'goto')
-            row['数据内容'] = self.unparse_node(call_node.args[0])
-            row['补充说明'] = f"原始代码: {original_code}"
-            
-            # 查找相应的断言步骤，并将页面跳转步骤插入到其之前
-            # 通过查找包含相同页面变量名的断言步骤
-            inserted = False
-            for i, step in enumerate(self.steps):
-                if (step['关键字'] == 'expect_codegen' and
-                    page_var in step['目标对象']):
-                    self.steps.insert(i, row)
-                    inserted = True
-                    break
-            
-            # 如果没有找到相应的断言步骤，则添加到步骤列表末尾
-            if not inserted:
-                self.steps.append(row)
-            return
-
-        # 3. 后续逻辑保持不变
+        # 2. 后续逻辑保持不变
         action_name = self.get_final_action_name(call_node)
         keyword = ACTION_MAP.get(action_name)
 
