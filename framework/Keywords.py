@@ -159,17 +159,98 @@ class Keywords:
         self.active_page = self._get_target_page(页面=page_index_str)
         print(f"✓ [状态切换] 当前活动页面已切换至 页{page_index_str}。")
 
+    def _is_valid_url(self, url_string: str) -> bool:
+        """
+        [内部] 检查字符串是否为有效的URL格式。
+        """
+        import re
+        url_pattern = re.compile(
+            r'^https?://'  # http:// 或 https://
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # 域名
+            r'localhost|'  # localhost
+            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # IP地址
+            r'(?::\d+)?'  # 可选端口号
+            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+        return url_pattern.match(url_string) is not None
+
     def close_page(self, **kwargs):
         """
         [关键字] 关闭指定的页面。
         如果'数据内容'列为空，则关闭当前活动页面。
         如果关闭的是活动页面，焦点会自动切换回主页面。
-        数据内容: [可选] 要关闭的页码 (e.g., "2")
+        数据内容: [可选] 要关闭的页码 (e.g., "2") 或 URL (e.g., "https://www.example.com")
         """
-        page_index_str = str(kwargs.get('数据内容', '')).strip()
-        target_page_to_close = self._get_target_page() if not page_index_str else self._get_target_page(页面=page_index_str)
+        data_content = str(kwargs.get('数据内容', '')).strip()
         
-        print(f"执行 [关闭页面]: 目标是 Page {self.context.pages.index(target_page_to_close) + 1}")
+        # 如果数据内容为空，关闭当前活动页面
+        if not data_content:
+            target_page_to_close = self._get_target_page()
+            page_identifier = f"Page {self.context.pages.index(target_page_to_close) + 1}"
+        # 如果数据内容是有效的URL，查找匹配的页面
+        elif self._is_valid_url(data_content):
+            target_page_to_close = None
+            for page in self.context.pages:
+                if page.url == data_content:
+                    target_page_to_close = page
+                    break
+            
+            if target_page_to_close is None:
+                error_msg = f"[警告] 未找到URL为 '{data_content}' 的页面，操作已跳过。"
+                print(error_msg)
+                return error_msg
+                
+            page_identifier = f"URL '{data_content}'"
+        # 如果数据内容不是有效的URL，但包含URL特征（如包含http://或https://），则按部分匹配查找
+        elif 'http://' in data_content or 'https://' in data_content:
+            target_page_to_close = None
+            for page in self.context.pages:
+                if data_content in page.url:
+                    target_page_to_close = page
+                    break
+            
+            if target_page_to_close is None:
+                error_msg = f"[警告] 未找到URL包含 '{data_content}' 的页面，操作已跳过。"
+                print(error_msg)
+                return error_msg
+                
+            page_identifier = f"URL 包含 '{data_content}'"
+        # 否则，检查是否是部分URL匹配
+        else:
+            target_page_to_close = None
+            for page in self.context.pages:
+                if data_content in page.url:
+                    target_page_to_close = page
+                    break
+            
+            # 如果找到匹配的页面，使用部分URL匹配
+            if target_page_to_close is not None:
+                page_identifier = f"URL 包含 '{data_content}'"
+            else:
+                # 检查是否是页面索引
+                try:
+                    # 尝试将数据内容转换为整数
+                    page_index = int(data_content)
+                    # 如果转换成功，使用页面索引
+                    target_page_to_close = self._get_target_page(页面=data_content)
+                    page_identifier = f"Page {self.context.pages.index(target_page_to_close) + 1}"
+                except ValueError:
+                    # 如果转换失败，尝试部分URL匹配
+                    target_page_to_close = None
+                    for page in self.context.pages:
+                        if data_content in page.url:
+                            target_page_to_close = page
+                            break
+                    
+                    # 如果找到匹配的页面，使用部分URL匹配
+                    if target_page_to_close is not None:
+                        page_identifier = f"URL 包含 '{data_content}'"
+                    else:
+                        # 如果没有找到匹配的页面，返回错误消息
+                        error_msg = f"[警告] 未找到URL包含 '{data_content}' 的页面，操作已跳过。"
+                        print(error_msg)
+                        return error_msg
+        
+        print(f"执行 [关闭页面]: 目标是 {page_identifier}")
         
         if len(self.context.pages) <= 1:
             print("[警告] 无法关闭最后一个页面，操作已跳过。")
