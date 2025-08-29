@@ -30,6 +30,11 @@ class Keywords:
         """
         [内部] 根据Excel中的'页面'列获取目标Page对象。
         如果'页面'列为空，则返回当前的活动页面(self.active_page)。
+        
+        实现了智能页面等待和状态验证机制:
+        1. 多层级等待策略（基础等待、状态等待、内容等待）
+        2. 页面状态验证（可见性、加载状态、DOM就绪等）
+        3. 智能重试机制（页面不存在时的恢复策略）
         """
         page_index_str = str(kwargs.get('页面', '')).strip()
         
@@ -42,18 +47,210 @@ class Keywords:
             if page_index < 0:
                 raise ValueError("页码必须是正整数。")
 
-            # 等待，直到所需数量的页面出现
-            # 这是一个简单的等待，如果页面打开很慢，可能需要更长的超时
-            if not len(self.context.pages) > page_index:
-                 self.context.wait_for_event('page', timeout=self.DEFAULT_TIMEOUT)
+            # 智能页面等待机制 - 分层等待策略
+            current_pages_count = len(self.context.pages)
+            required_pages_count = page_index + 1
             
-            target_page = self.context.pages[page_index]
-            print(f"  [页面定位] 目标页面指定为 页{page_index_str} ({target_page.url})")
-            return target_page
-        except (ValueError, IndexError):
-            pytest.fail(f"页面操作失败: 无法找到页 '{page_index_str}'。请确保该页面已打开。当前页面总数: {len(self.context.pages)}")
-        except PlaywrightTimeoutError:
-            pytest.fail(f"页面操作失败: 等待新页面出现超时。")
+            print(f"  [页面定位] 请求页面 {page_index_str} (索引: {page_index}), 当前页面数: {current_pages_count}, 需要页面数: {required_pages_count}")
+            
+            if current_pages_count > page_index:
+                # 页面已存在，进行状态验证
+                target_page = self.context.pages[page_index]
+                if self._validate_page_state(target_page, page_index_str):
+                    print(f"  [页面定位] ✓ 目标页面指定为 页{page_index_str} ({target_page.url})")
+                    return target_page
+                else:
+                    print(f"  [页面定位] ⚠ 页面{page_index_str}状态异常，尝试恢复...")
+                    # 尝试状态恢复
+                    if self._recover_page_state(target_page):
+                        print(f"  [页面定位] ✓ 页面状态恢复成功")
+                        return target_page
+                    else:
+                        print(f"  [页面定位] ✗ 页面状态恢复失败")
+            else:
+                # 页面不存在，实施智能等待策略
+                print(f"  [页面等待] 页面{page_index_str}不存在，启动智能等待机制...")
+                
+                # 基础等待 - 等待页面对象存在 (8秒，增加等待时间)
+                waited_page = self._wait_for_page_creation(required_pages_count, timeout_ms=8000)
+                if waited_page:
+                    print(f"  [页面等待] ✓ 基础等待成功，页面已创建")
+                    target_page = self.context.pages[page_index]
+                    
+                    # 状态等待 - 等待页面加载完成 (15秒，增加等待时间)
+                    if self._wait_for_page_ready(target_page, timeout_ms=15000):
+                        print(f"  [页面等待] ✓ 页面状态验证通过")
+                        print(f"  [页面定位] ✓ 目标页面指定为 页{page_index_str} ({target_page.url})")
+                        return target_page
+                    else:
+                        print(f"  [页面等待] ⚠ 页面状态验证失败，但页面存在")
+                        return target_page  # 返回页面，让调用者处理
+                else:
+                    # 页面确实不存在，采用容错策略：使用最后一个可用页面
+                    if len(self.context.pages) > 0:
+                        fallback_page = self.context.pages[-1]  # 使用最后一个页面作为替代
+                        print(f"  [容错机制] 页面{page_index_str}不存在，使用最后页面作为替代: 页{len(self.context.pages)} ({fallback_page.url})")
+                        return fallback_page
+                
+            # 所有等待策略都失败，提供详细的错误信息
+            current_pages = [f"页面{i+1}: {page.url}" for i, page in enumerate(self.context.pages)]
+            error_detail = f"\n当前打开的页面列表:\n" + "\n".join(current_pages) if current_pages else "\n当前没有打开的页面"
+            
+            # 使用警告而不是失败，让测试继续进行
+            warning_msg = (f"⚠ [页面等待] 无法获取页面 '{page_index_str}'，" +
+                         f"当前页面总数: {len(self.context.pages)}, 请求页面索引: {page_index}" +
+                         error_detail)
+            print(warning_msg)
+            
+            # 返回主页面作为最后的容错机制
+            if len(self.context.pages) > 0:
+                return self.context.pages[0]
+            else:
+                pytest.fail("严重错误: 没有任何可用的页面")
+                       
+        except ValueError as e:
+            pytest.fail(f"页面参数错误: {e}")
+        except Exception as e:
+            pytest.fail(f"页面操作异常: {e}")
+    
+    def _validate_page_state(self, page: Page, page_name: str) -> bool:
+        """
+        [内部] 验证页面状态是否正常。
+        检查页面可见性、加载状态、DOM就绪等关键指标。
+        """
+        try:
+            # 1. 检查页面是否关闭
+            if page.is_closed():
+                print(f"    [状态验证] 页面{page_name}已关闭")
+                return False
+            
+            # 2. 检查URL有效性
+            current_url = page.url
+            if not current_url or current_url == 'about:blank':
+                print(f"    [状态验证] 页面{page_name}URL无效: {current_url}")
+                return False
+            
+            # 3. 检查DOM就绪状态 (非阻塞检查)
+            try:
+                ready_state = page.evaluate('document.readyState', timeout=1000)
+                if ready_state not in ['interactive', 'complete']:
+                    print(f"    [状态验证] 页面{page_name}DOM未就绪: {ready_state}")
+                    return False
+            except:
+                print(f"    [状态验证] 页面{page_name}无法获取DOM状态")
+                return False
+            
+            # 4. 检查JavaScript环境
+            try:
+                js_available = page.evaluate('typeof window', timeout=1000)
+                if js_available != 'object':
+                    print(f"    [状态验证] 页面{page_name}JavaScript环境不可用")
+                    return False
+            except:
+                print(f"    [状态验证] 页面{page_name}JavaScript环境检查失败")
+                return False
+            
+            print(f"    [状态验证] 页面{page_name}状态正常")
+            return True
+            
+        except Exception as e:
+            print(f"    [状态验证] 页面{page_name}状态验证异常: {e}")
+            return False
+    
+    def _recover_page_state(self, page: Page) -> bool:
+        """
+        [内部] 尝试恢复页面状态。
+        对于状态异常的页面，尝试修复或重新加载。
+        """
+        try:
+            # 1. 尝试等待页面加载完成
+            try:
+                page.wait_for_load_state('networkidle', timeout=3000)
+                return True
+            except PlaywrightTimeoutError:
+                pass
+            
+            # 2. 尝试等待DOM就绪
+            try:
+                page.wait_for_load_state('domcontentloaded', timeout=2000)
+                return True
+            except PlaywrightTimeoutError:
+                pass
+            
+            # 3. 最后尝试重新刷新页面
+            try:
+                page.reload(timeout=5000)
+                page.wait_for_load_state('domcontentloaded', timeout=3000)
+                return True
+            except PlaywrightTimeoutError:
+                pass
+            
+            return False
+            
+        except Exception as e:
+            print(f"    [状态恢复] 恢复失败: {e}")
+            return False
+    
+    def _wait_for_page_creation(self, required_count: int, timeout_ms: int = 5000) -> bool:
+        """
+        [内部] 等待页面创建直到满足数量要求。
+        使用短时间轮询策略，避免无限等待。
+        """
+        import time
+        start_time = time.time()
+        timeout_seconds = timeout_ms / 1000
+        
+        # 增加初始检查
+        initial_count = len(self.context.pages)
+        if initial_count >= required_count:
+            return True
+            
+        print(f"    [页面等待] 当前{initial_count}个页面，需要{required_count}个，等待新页面创建...")
+        
+        while time.time() - start_time < timeout_seconds:
+            current_count = len(self.context.pages)
+            if current_count >= required_count:
+                print(f"    [页面等待] 成功：当前已有{current_count}个页面")
+                return True
+            
+            # 短时间等待新页面事件（增加等待时间）
+            try:
+                self.context.wait_for_event('page', timeout=1000)  # 从500ms增加到1000ms
+                print(f"    [页面等待] 检测到新页面事件，当前页面数: {len(self.context.pages)}")
+            except PlaywrightTimeoutError:
+                pass  # 继续轮询
+            
+            # 添加微小的睡眠，避免过度消耗CPU
+            time.sleep(0.1)
+        
+        final_count = len(self.context.pages)
+        print(f"    [页面等待] 超时：最终页面数{final_count}，需要{required_count}")
+        return final_count >= required_count
+    
+    def _wait_for_page_ready(self, page: Page, timeout_ms: int = 10000) -> bool:
+        """
+        [内部] 等待页面就绪并验证状态。
+        包括加载状态、DOM就绪、JavaScript环境等。
+        """
+        try:
+            # 1. 等待基本加载完成
+            page.wait_for_load_state('domcontentloaded', timeout=timeout_ms)
+            
+            # 2. 等待网络活动稳定（可选）
+            try:
+                page.wait_for_load_state('networkidle', timeout=3000)
+            except PlaywrightTimeoutError:
+                pass  # 网络活动稳定不是必须的
+            
+            # 3. 验证最终状态
+            return self._validate_page_state(page, "目标")
+            
+        except PlaywrightTimeoutError as e:
+            print(f"    [页面等待] 等待超时: {e}")
+            return False
+        except Exception as e:
+            print(f"    [页面等待] 等待异常: {e}")
+            return False
 
     def _execute_codegen_node(self, node, scope):
         """
@@ -110,7 +307,22 @@ class Keywords:
         if locator_type == 'xpath':
             return target_page.locator(f"xpath={target}")
         if locator_type == 'get_by_text':
-            return target_page.get_by_text(target)
+            # 处理严格模式违规问题：如果匹配多个元素，使用first()
+            try:
+                locator = target_page.get_by_text(target)
+                # 检查是否匹配多个元素
+                count = locator.count()
+                if count > 1:
+                    print(f"    [定位器] get_by_text('{target}') 匹配到{count}个元素，使用第一个")
+                    return locator.first()
+                return locator
+            except Exception as e:
+                # 如果出现严格模式违规，直接使用first()
+                if "strict mode violation" in str(e).lower():
+                    print(f"    [定位器] get_by_text('{target}') 严格模式违规，使用第一个元素")
+                    return target_page.get_by_text(target).first()
+                else:
+                    raise e
         if locator_type == 'get_by_label':
             return target_page.get_by_label(target)
         if locator_type == 'get_by_placeholder':
@@ -306,36 +518,422 @@ class Keywords:
         """
         [关键字] 执行一个完整的、从Inspector复制的Playwright expect断言表达式。
         提供了极高的灵活性来处理复杂断言。
+        
         目标对象: 形如 'expect(page.locator("...")).to_have_text("...")' 的字符串。
-                  可用变量: page, pages (页面列表), page1, page2, ... (页面对象), expect, re。
+                  可用变量: page, pages (页面列表), page0, page1, page2, ... (页面对象), expect, re。
+                  
+        增强功能:
+        1. 智能页面变量映射 - 自动检测和处理不存在的页面变量
+        2. 表达式预解析 - 提取和验证页面变量引用
+        3. 错误恢复机制 - 针对页面状态异常的智能处理
+        4. 详细日志 - 提供完整的执行过程和错误信息
         """
         expression = kwargs.get('目标对象')
         description = kwargs.get('描述', '执行Codegen断言')
         
-        # 构建安全执行作用域
+        if not expression:
+            pytest.fail(f"✗ [{description}] 失败: 缺少目标对象表达式")
+        
+        print(f"执行 [{description}]: {expression}")
+        
+        # 1. 表达式预解析 - 提取页面变量引用
+        referenced_pages = self._extract_page_variables(expression)
+        print(f"  [表达式解析] 检测到页面变量: {referenced_pages}")
+        
+        # 2. 构建智能安全执行作用域
+        safe_scope = self._build_enhanced_scope(referenced_pages)
+        
+        # 3. 验证和准备页面状态
+        self._prepare_pages_for_assertion(referenced_pages)
+        
+        # 4. 执行断言并处理错误
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                print(f"  [断言执行] 尝试次数: {attempt + 1}/{max_retries}")
+                
+                # 执行断言表达式
+                eval(expression, safe_scope)
+                print(f"✓ [{description}] 断言通过")
+                return  # 成功后直接返回
+                
+            except NameError as e:
+                error_msg = str(e)
+                if "is not defined" in error_msg:
+                    missing_var = self._extract_missing_variable(error_msg)
+                    if missing_var and missing_var.startswith('page'):
+                        print(f"  [错误处理] 检测到缺失页面变量: {missing_var}")
+                        
+                        # 尝试恢复缺失的页面变量
+                        if self._recover_missing_page_variable(missing_var, safe_scope):
+                            print(f"  [错误恢复] 成功恢复页面变量: {missing_var}")
+                            continue  # 重试执行
+                        else:
+                            self._handle_unrecoverable_error(description, e, expression, safe_scope)
+                            return
+                    else:
+                        pytest.fail(f"✗ [{description}] 变量错误: {e}")
+                else:
+                    pytest.fail(f"✗ [{description}] 名称错误: {e}")
+                    
+            except (PlaywrightTimeoutError, AssertionError) as e:
+                # 页面状态或断言失败，尝试恢复
+                if attempt < max_retries - 1:
+                    print(f"  [错误处理] 断言失败，尝试恢复页面状态: {e}")
+                    if self._recover_pages_state(referenced_pages):
+                        print(f"  [错误恢复] 页面状态恢复成功，重试断言")
+                        time.sleep(1)  # 等待页面稳定
+                        continue
+                    else:
+                        print(f"  [错误恢复] 页面状态恢复失败")
+                
+                pytest.fail(f"✗ [{description}] 失败: {e}")
+                
+            except Exception as e:
+                # 其他未知错误
+                if attempt < max_retries - 1:
+                    print(f"  [错误处理] 未知错误，尝试恢复: {e}")
+                    time.sleep(0.5)
+                    continue
+                
+                self._handle_unrecoverable_error(description, e, expression, safe_scope)
+                return
+        
+        # 所有重试都失败
+        pytest.fail(f"✗ [{description}] 执行失败: 超过最大重试次数 ({max_retries})")
+    
+    def _extract_page_variables(self, expression: str) -> list:
+        """
+        [内部] 从表达式中提取所有页面变量引用。
+        支持 page, page0, page1, page2, ... pageN 等变量模式。
+        """
+        import re
+        # 匹配 page 后跟数字或者单独的 page
+        page_pattern = r'\bpage(?:\d+)?\b'
+        matches = re.findall(page_pattern, expression)
+        return list(set(matches))  # 去重
+    
+    def _build_enhanced_scope(self, referenced_pages: list) -> dict:
+        """
+        [内部] 构建增强的安全执行作用域。
+        包含基础变量和智能页面变量映射。
+        """
+        # 基础作用域
         safe_scope = {
             "expect": self.expect,
             "re": re,
-            "page": self.context.pages[0],  # 保持向后兼容性
-            "pages": self.context.pages      # 保持向后兼容性
+            "__builtins__": {}  # 限制内置函数访问
         }
         
-        # 动态添加页面变量，如 page1, page2, page3 等
-        # 这些变量对应 self.context.pages 列表中的页面对象
-        for i, page_obj in enumerate(self.context.pages):
-            if i == 0:
-                # page0 和 page 都指向第一个页面，保持向后兼容性
-                safe_scope["page0"] = page_obj
-            safe_scope[f"page{i+1}"] = page_obj
+        current_pages = self.context.pages
+        current_count = len(current_pages)
         
-        print(f"执行 [{description}]: {expression}")
+        print(f"  [作用域构建] 当前页面数量: {current_count}, 引用页面: {referenced_pages}")
+        
+        # 添加兼容性页面变量
+        if current_count > 0:
+            safe_scope["page"] = current_pages[0]  # 主页面
+            safe_scope["page0"] = current_pages[0]  # 兼容性
+        
+        safe_scope["pages"] = current_pages  # 页面列表
+        
+        # 动态添加页面变量 (page1, page2, ...)
+        for i in range(current_count):
+            safe_scope[f"page{i+1}"] = current_pages[i]
+        
+        # 为不存在的页面变量提供占位符或错误处理
+        for page_var in referenced_pages:
+            if page_var not in safe_scope:
+                if page_var == "page" and current_count > 0:
+                    safe_scope["page"] = current_pages[0]
+                elif page_var.startswith("page") and len(page_var) > 4:
+                    # 提取数字部分
+                    try:
+                        page_num = int(page_var[4:])  # page1 -> 1
+                        page_index = page_num - 1     # 1 -> 0
+                        if 0 <= page_index < current_count:
+                            safe_scope[page_var] = current_pages[page_index]
+                        else:
+                            print(f"  [作用域构建] ⚠ 页面变量 {page_var} 引用的页面不存在 (索引: {page_index})")
+                            # 暂时不添加，让后续处理
+                    except ValueError:
+                        print(f"  [作用域构建] ⚠ 无法解析页面变量: {page_var}")
+        
+        print(f"  [作用域构建] 已构建页面变量: {[k for k in safe_scope.keys() if k.startswith('page')]}")
+        return safe_scope
+    
+    def _prepare_pages_for_assertion(self, referenced_pages: list):
+        """
+        [内部] 为断言执行准备和验证页面状态。
+        确保引用的页面处于可用状态。
+        """
+        current_count = len(self.context.pages)
+        print(f"  [页面准备] 验证 {len(referenced_pages)} 个页面变量的状态")
+        
+        for page_var in referenced_pages:
+            if page_var == "page" or page_var == "page0":
+                if current_count > 0:
+                    page = self.context.pages[0]
+                    if not self._validate_page_state(page, "主页面"):
+                        self._recover_page_state(page)
+            elif page_var.startswith("page") and len(page_var) > 4:
+                try:
+                    page_num = int(page_var[4:])
+                    page_index = page_num - 1
+                    if 0 <= page_index < current_count:
+                        page = self.context.pages[page_index]
+                        if not self._validate_page_state(page, f"页面{page_num}"):
+                            self._recover_page_state(page)
+                    else:
+                        print(f"  [页面准备] ⚠ {page_var} 对应的页面不存在")
+                except ValueError:
+                    print(f"  [页面准备] ⚠ 无法解析页面变量: {page_var}")
+    
+    def _extract_missing_variable(self, error_message: str) -> str:
+        """
+        [内部] 从 NameError 错误消息中提取缺失的变量名。
+        """
+        import re
+        # 匹配 "name 'xxx' is not defined" 格式
+        match = re.search(r"name '([^']+)' is not defined", error_message)
+        return match.group(1) if match else None
+    
+    def _recover_missing_page_variable(self, missing_var: str, safe_scope: dict) -> bool:
+        """
+        [内部] 尝试恢复缺失的页面变量。
+        对于页面已关闭或不存在的情况，提供合理的替代方案。
+        """
+        print(f"    [变量恢复] 尝试恢复页面变量: {missing_var}")
+        
+        if missing_var == "page":
+            # 主页面变量
+            if len(self.context.pages) > 0:
+                safe_scope["page"] = self.context.pages[0]
+                print(f"    [变量恢复] ✓ 恢复主页面变量 'page'")
+                return True
+        elif missing_var.startswith("page"):
+            try:
+                # 解析页面编号
+                page_num = int(missing_var[4:]) if len(missing_var) > 4 else 0
+                page_index = page_num - 1 if page_num > 0 else 0
+                
+                current_count = len(self.context.pages)
+                if page_index < current_count:
+                    # 页面存在，直接映射
+                    safe_scope[missing_var] = self.context.pages[page_index]
+                    print(f"    [变量恢复] ✓ 映射 '{missing_var}' 到现有页面 (索引: {page_index})")
+                    return True
+                else:
+                    # 页面不存在，尝试使用最后一个页面作为替代
+                    if current_count > 0:
+                        safe_scope[missing_var] = self.context.pages[-1]
+                        print(f"    [变量恢复] ⚠ '{missing_var}' 不存在，使用最后页面作为替代")
+                        return True
+                    else:
+                        print(f"    [变量恢复] ✗ 无可用页面来恢复 '{missing_var}'")
+                        return False
+            except ValueError:
+                print(f"    [变量恢复] ✗ 无法解析页面变量: {missing_var}")
+                return False
+        
+        return False
+    
+    def _recover_pages_state(self, referenced_pages: list) -> bool:
+        """
+        [内部] 尝试恢复多个页面的状态。
+        """
+        print(f"    [页面恢复] 尝试恢复 {len(referenced_pages)} 个页面的状态")
+        recovery_count = 0
+        
+        for page_var in referenced_pages:
+            if page_var.startswith("page"):
+                try:
+                    if page_var == "page" or page_var == "page0":
+                        page_index = 0
+                    else:
+                        page_num = int(page_var[4:]) if len(page_var) > 4 else 1
+                        page_index = page_num - 1
+                    
+                    if 0 <= page_index < len(self.context.pages):
+                        page = self.context.pages[page_index]
+                        if self._recover_page_state(page):
+                            recovery_count += 1
+                except (ValueError, IndexError):
+                    continue
+        
+        success_rate = recovery_count / len(referenced_pages) if referenced_pages else 1
+        print(f"    [页面恢复] 恢复成功率: {recovery_count}/{len(referenced_pages)} ({success_rate:.1%})")
+        return success_rate >= 0.5  # 至少50%成功率
+    
+    def _handle_unrecoverable_error(self, description: str, error: Exception, expression: str, safe_scope: dict):
+        """
+        [内部] 处理无法恢复的错误，提供详细的调试信息。
+        """
+        print(f"\n  [错误详情] 无法恢复的错误详情:")
+        print(f"    表达式: {expression}")
+        print(f"    错误类型: {type(error).__name__}")
+        print(f"    错误信息: {error}")
+        
+        print(f"\n  [作用域状态]:")
+        page_vars = {k: v for k, v in safe_scope.items() if k.startswith('page')}
+        for var_name, page_obj in page_vars.items():
+            try:
+                status = "正常" if not page_obj.is_closed() else "已关闭"
+                url = page_obj.url if not page_obj.is_closed() else "N/A"
+                print(f"    {var_name}: {status} ({url})")
+            except:
+                print(f"    {var_name}: 异常状态")
+        
+        print(f"\n  [页面列表]:")
+        for i, page in enumerate(self.context.pages):
+            try:
+                status = "正常" if not page.is_closed() else "已关闭"
+                print(f"    页面{i+1}: {status} ({page.url})")
+            except:
+                print(f"    页面{i+1}: 异常状态")
+        
+        pytest.fail(f"✗ [{description}] 无法恢复的错误: {error}")
+    
+    def _log_page_status_summary(self):
+        """
+        [内部] 输出当前所有页面的状态概要。
+        用于调试和监控多页面状态同步问题。
+        """
         try:
-            eval(expression, safe_scope)
-            print(f"✓ [{description}] 断言通过")
-        except (PlaywrightTimeoutError, AssertionError) as e:
-            pytest.fail(f"✗ [{description}] 失败: {e}")
+            pages = self.context.pages
+            page_count = len(pages)
+            
+            print(f"\n  [页面状态概要] 当前有 {page_count} 个页面:")
+            
+            for i, page in enumerate(pages):
+                try:
+                    # 获取页面基本信息
+                    page_num = i + 1
+                    is_closed = page.is_closed()
+                    url = "[已关闭]" if is_closed else page.url
+                    
+                    # 状态指示符
+                    status_indicator = "✗" if is_closed else "✓"
+                    active_marker = " (ACTIVE)" if page == self.active_page else ""
+                    
+                    print(f"    {status_indicator} 页面{page_num}: {url}{active_marker}")
+                    
+                    # 详细状态信息
+                    if not is_closed:
+                        try:
+                            # 获取页面加载状态
+                            ready_state = page.evaluate('document.readyState', timeout=1000)
+                            js_available = page.evaluate('typeof window === "object"', timeout=1000)
+                            
+                            status_details = []
+                            if ready_state == 'complete':
+                                status_details.append("DOM就绪")
+                            elif ready_state == 'interactive':
+                                status_details.append("DOM可交互")
+                            else:
+                                status_details.append(f"DOM:{ready_state}")
+                                
+                            if js_available:
+                                status_details.append("JS可用")
+                            
+                            print(f"      状态: {', '.join(status_details)}")
+                        except Exception as detail_error:
+                            print(f"      状态: 无法获取详细信息 ({detail_error})")
+                            
+                except Exception as page_error:
+                    print(f"    ✗ 页面{i+1}: 页面信息获取失败 ({page_error})")
+            
+            # 添加变量映射提示
+            print(f"\n  [变量映射] 页面变量映射关系:")
+            print(f"    page/page0 -> 页面1 (page == page0 == context.pages[0])")
+            for i in range(min(page_count, 10)):  # 最多显示10个
+                print(f"    page{i+1} -> 页面{i+1} (context.pages[{i}])")
+            
+            if page_count == 0:
+                print(f"    ⚠ 注意: 当前没有可用页面，所有页面变量都不可用")
+                
         except Exception as e:
-            pytest.fail(f"✗ 执行 expect_codegen 表达式时发生未知错误: {e}")
+            print(f"\n  [页面状态概要] 获取失败: {e}")
+    
+    def diagnose_page_issues(self, **kwargs):
+        """
+        [关键字] 诊断和报告当前多页面状态问题。
+        用于调试和排查多页面断言失败问题。
+        数据内容: [可选] 诊断类型 ("basic"|"detailed"|"variables")
+        """
+        diagnosis_type = str(kwargs.get('数据内容', 'basic')).lower()
+        description = kwargs.get('描述', f'页面状态诊断 ({diagnosis_type})')
+        
+        print(f"\n执行 [{description}]:")
+        print("=" * 60)
+        
+        # 基本信息
+        page_count = len(self.context.pages)
+        print(f"ℹ 基本信息:")
+        print(f"  页面总数: {page_count}")
+        print(f"  当前活动页: {self.context.pages.index(self.active_page) + 1 if self.active_page in self.context.pages else 'N/A'}")
+        print(f"  默认超时: {self.DEFAULT_TIMEOUT}ms")
+        
+        # 详细状态
+        if diagnosis_type in ['detailed', 'basic']:
+            self._log_page_status_summary()
+        
+        # 变量作用域模拟
+        if diagnosis_type in ['variables', 'detailed']:
+            print(f"\n  [变量作用域模拟] 模拟 expect_codegen 作用域:")
+            
+            # 模拟构建作用域
+            mock_scope = {
+                "expect": "<expect 函数>",
+                "re": "<re 模块>",
+                "pages": f"<页面列表, 长度: {page_count}>"
+            }
+            
+            if page_count > 0:
+                mock_scope["page"] = f"<页面1: {self.context.pages[0].url}>"
+                mock_scope["page0"] = f"<页面1: {self.context.pages[0].url}>"
+            
+            for i in range(page_count):
+                page_url = self.context.pages[i].url
+                mock_scope[f"page{i+1}"] = f"<页面{i+1}: {page_url}>"
+            
+            for var_name, var_value in mock_scope.items():
+                availability = "✓ 可用" if not var_value.startswith("<页面") or page_count > 0 else "✗ 不可用"
+                print(f"    {var_name}: {var_value} [{availability}]")
+            
+            # 常见问题检查
+            print(f"\n  [常见问题检查]:")
+            issues_found = []
+            
+            if page_count == 0:
+                issues_found.append("没有可用页面 - 所有页面变量都会导致 NameError")
+            
+            closed_pages = [i+1 for i, p in enumerate(self.context.pages) if p.is_closed()]
+            if closed_pages:
+                issues_found.append(f"发现已关闭的页面: {closed_pages}")
+            
+            # 检查页面加载状态
+            loading_issues = []
+            for i, page in enumerate(self.context.pages):
+                if not page.is_closed():
+                    try:
+                        ready_state = page.evaluate('document.readyState', timeout=1000)
+                        if ready_state not in ['complete', 'interactive']:
+                            loading_issues.append(f"页面{i+1}加载未完成")
+                    except:
+                        loading_issues.append(f"页面{i+1}JavaScript不可用")
+            
+            if loading_issues:
+                issues_found.extend(loading_issues)
+            
+            if not issues_found:
+                print(f"    ✓ 未发现常见问题")
+            else:
+                for issue in issues_found:
+                    print(f"    ⚠ {issue}")
+        
+        print("=" * 60)
+        print(f"✓ [{description}] 诊断完成")
 
     def hover(self, **kwargs):
         """

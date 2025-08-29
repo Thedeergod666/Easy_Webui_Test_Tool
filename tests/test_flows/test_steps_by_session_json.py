@@ -59,6 +59,8 @@ def pytest_configure(config):
 
 def pytest_generate_tests(metafunc):
     """动态生成测试参数"""
+    global all_steps  # 将global声明移到函数开始
+    
     if "flow_config" in metafunc.fixturenames:
         # 获取配置文件路径
         config_file = metafunc.config.getoption("--flow-config-file", None)
@@ -90,8 +92,12 @@ def pytest_generate_tests(metafunc):
                     print(f"警告: 测试文件不存在: {excel_path}")
             metafunc.parametrize('test_step', all_steps)
         else:
-            # 默认行为：使用全局的all_steps
-            metafunc.parametrize('test_step', all_steps)
+            # 默认行为：使用全局的all_steps，如果不存在则使用空列表
+            if 'all_steps' in globals() and all_steps:
+                metafunc.parametrize('test_step', all_steps)
+            else:
+                print("\n[警告] 未找到可用的测试步骤数据")
+                metafunc.parametrize('test_step', [])
 
 # 3. 在全局作用域加载数据
 # 为了保持向后兼容性，如果没有通过命令行参数传递配置文件，则从默认配置加载
