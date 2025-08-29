@@ -16,10 +16,12 @@ def load_test_data_from_config(config_file=None):
     
     if config_file and os.path.exists(config_file):
         config_path = config_file
+        print(f"[调试] 使用临时配置文件: {config_path}")
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 # 如果是临时配置文件，直接加载内容
                 flows = json.load(f)
+            print(f"[调试] 从临时配置文件加载到 {len(flows)} 个流程")
             # 对于临时配置文件，返回所有流程，因为用户明确选择了这些流程
             # 即使enabled=false也应该执行用户选择的流程
             return flows if isinstance(flows, list) else []
@@ -28,6 +30,7 @@ def load_test_data_from_config(config_file=None):
             return []
     else:
         config_path = os.path.join(project_root, 'test_data', 'test_config.json')
+        print(f"[调试] 使用默认配置文件: {config_path}")
         if not os.path.exists(config_path):
             print(f"测试配置文件不存在: {config_path}")
             return []
@@ -36,6 +39,7 @@ def load_test_data_from_config(config_file=None):
             # 如果是默认配置文件，获取test_flows列表
             config = json.load(f)
             flows = config.get("test_flows", [])
+        print(f"[调试] 从默认配置文件加载到 {len(flows)} 个流程")
         
         # 只返回启用的测试流程（如果enabled键不存在，默认为True）
         # 为没有指定浏览器的流程设置默认浏览器为chromium
@@ -43,6 +47,9 @@ def load_test_data_from_config(config_file=None):
             if "browser" not in flow:
                 flow["browser"] = "chromium"
         enabled_flows = [flow for flow in flows if isinstance(flow, dict) and flow.get("enabled", True)]
+        print(f"[调试] 过滤后得到 {len(enabled_flows)} 个启用的流程")
+        for i, flow in enumerate(enabled_flows):
+            print(f"[调试] 启用的流程 {i+1}: {flow.get('file_path', 'N/A')} (Sheet: {flow.get('sheet_name', 'N/A')})")
         return enabled_flows
 
 def pytest_addoption(parser):
@@ -73,6 +80,7 @@ def pytest_generate_tests(metafunc):
         if config_file:
             # 如果提供了配置文件，则只从配置文件加载指定的流程
             flow_configs = load_test_data_from_config(config_file)
+            print(f"[调试] 从配置文件加载到 {len(flow_configs)} 个流程配置")
             all_steps = []
             for flow_config in flow_configs:
                 excel_file = flow_config["file_path"]
@@ -85,8 +93,10 @@ def pytest_generate_tests(metafunc):
                 else:
                     excel_path = excel_file
                     
+                print(f"[调试] 尝试加载Excel文件: {excel_path} (Sheet: {sheet_name})")
                 if os.path.exists(excel_path):
                     steps = pd.read_excel(excel_path, sheet_name=sheet_name).fillna('').to_dict(orient='records')
+                    print(f"[调试] 从 {excel_path} 加载到 {len(steps)} 个测试步骤")
                     all_steps.extend(steps)
                 else:
                     print(f"警告: 测试文件不存在: {excel_path}")
@@ -106,14 +116,41 @@ all_steps = [] # 默认为空列表
 
 # 4. 只有在成功获取到配置时，才读取Excel
 if flows_to_run:
-    # 使用第一个启用的流程来读取步骤（保持向后兼容性）
-    first_flow = flows_to_run[0]
-    excel_path = first_flow.get("file_path")
-    sheet_name = first_flow.get("sheet_name")
+    print(f"[调试] Session模式下找到 {len(flows_to_run)} 个启用的流程")
     
+    # 查找用户期望的测试流程（test_data/114514.xlsx, Sheet: 'Sheet1'）
+    target_flow = None
+    for flow in flows_to_run:
+        # 标准化文件路径以进行比较
+        flow_file_path = flow.get("file_path", "")
+        flow_sheet_name = flow.get("sheet_name", "")
+        
+        # 检查是否匹配用户期望的流程
+        if "114514.xlsx" in flow_file_path and flow_sheet_name == "Sheet1":
+            target_flow = flow
+            break
+    
+    # 如果找到了用户期望的流程，则使用该流程，否则使用第一个启用的流程
+    if target_flow:
+        selected_flow = target_flow
+        print(f"[调试] 找到用户期望的测试流程: {selected_flow.get('file_path')} (Sheet: {selected_flow.get('sheet_name')})")
+    else:
+        selected_flow = flows_to_run[0]
+        print(f"[调试] 未找到用户期望的测试流程，使用第一个启用的流程")
+    
+    excel_path = selected_flow.get("file_path")
+    sheet_name = selected_flow.get("sheet_name")
+    
+    # 处理相对路径
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    if not os.path.isabs(excel_path):
+        excel_path = os.path.join(project_root, excel_path)
+    
+    print(f"[调试] Session模式将使用流程: {excel_path} (Sheet: {sheet_name})")
     if excel_path and sheet_name and os.path.exists(excel_path):
         print(f"\n[Session测试模式] 将从文件 '{excel_path}' (Sheet: '{sheet_name}') 加载所有测试步骤。")
         all_steps = pd.read_excel(excel_path, sheet_name=sheet_name).fillna('').to_dict(orient='records')
+        print(f"[调试] 从 {excel_path} 加载到 {len(all_steps)} 个测试步骤")
     else:
         print(f"\n[警告] Session测试模式配置的Excel文件不存在或配置不完整: {excel_path}")
 else:
