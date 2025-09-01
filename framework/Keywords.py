@@ -3,21 +3,76 @@ import re
 import pytest
 import ast
 import time
+import functools
 from playwright.sync_api import Page, Locator, expect, Error as PlaywrightTimeoutError, BrowserContext
 
 # 全局变量，用于在测试会话结束时报告总的sleep时间
 _total_sleep_time = 0.0
 
+def _log_action(func):
+    """
+    装饰器，用于自动记录关键字操作的详细步骤，包括截图和状态记录。
+    
+    :param func: 被装饰的函数
+    :return: 装饰后的函数
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        # 获取self实例
+        self = args[0] if args else None
+        if not self or not hasattr(self, 'report_logger') or not self.report_logger:
+            # 如果没有report_logger，直接执行原函数
+            return func(*args, **kwargs)
+        
+        # 提取关键字信息
+        keyword_name = func.__name__
+        description = kwargs.get('描述', keyword_name)
+        target = kwargs.get('目标对象', '')
+        locator_type = kwargs.get('定位方式', '')
+        data_content = kwargs.get('数据内容', '')
+        
+        # 构建详细信息
+        details = {}
+        if target:
+            details['target'] = target
+        if locator_type:
+            details['locator_type'] = locator_type
+        if data_content:
+            details['data_content'] = data_content
+        
+        # 开始记录步骤
+        self.report_logger.start_step(
+            keyword=keyword_name,
+            description=description,
+            details=details
+        )
+        
+        try:
+            # 执行原函数
+            result = func(*args, **kwargs)
+            # 结束记录步骤（成功）
+            self.report_logger.end_step('PASS')
+            return result
+        except Exception as e:
+            # 记录失败状态
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            self.report_logger.end_step('FAIL', error_msg)
+            # 重新抛出异常，不影响测试执行
+            raise
+        
+    return wrapper
+
 class Keywords:
     DEFAULT_TIMEOUT = 10000
 
-    def __init__(self, page: Page):
+    def __init__(self, page: Page, report_logger=None):
         """
         初始化Keywords实例。
         持有整个浏览器上下文(Context)以管理多个页面，并设置初始活动页面。
         """
         self.context: BrowserContext = page.context
         self.active_page: Page = page  # 初始活动页面是主页面
+        self.report_logger = report_logger  # ReportLogger实例，用于记录测试步骤
         
         # 将默认超时应用到初始页面
         self.active_page.set_default_timeout(self.DEFAULT_TIMEOUT)
@@ -359,6 +414,7 @@ class Keywords:
     
     # --- 新增和改造的页面操作关键字 ---
 
+    @_log_action
     def switch_to_page(self, **kwargs):
         """
         [关键字] 切换当前的活动页面。
@@ -492,6 +548,7 @@ class Keywords:
             if not new_page.is_closed(): new_page.close()
             raise e
 
+    @_log_action
     def open(self, **kwargs):
         """
         [关键字] 在当前的活动页面上导航到指定的URL。
@@ -507,7 +564,7 @@ class Keywords:
         try:
             self.active_page.goto(url, timeout=timeout_ms)
             duration = time.time() - start_time
-            print(f"✓ [打开页面] 成功加载, 耗时: {duration:.2f} 秒")
+            print(f"SUCCESS [Open Page] Loaded successfully, Duration: {duration:.2f}s")
         except PlaywrightTimeoutError:
             duration = time.time() - start_time
             pytest.fail(f"✗ 打开页面 {url} 失败: 超时({timeout_ms/1000}s), 实际等待 {duration:.2f}s")
@@ -935,6 +992,7 @@ class Keywords:
         print("=" * 60)
         print(f"✓ [{description}] 诊断完成")
 
+    @_log_action
     def hover(self, **kwargs):
         """
         [关键字] 将鼠标悬停在指定的元素上。
@@ -962,6 +1020,7 @@ class Keywords:
         except ValueError:
             pytest.fail(f"滚动数据格式错误: '{scroll_data}', 期望格式为 'x,y' (例如 '0,500')")
  
+    @_log_action
     def go_back(self, **kwargs):
         """
         [关键字] 模拟浏览器的后退按钮。
@@ -972,6 +1031,7 @@ class Keywords:
         self.active_page.wait_for_load_state('domcontentloaded')
         print(f"✓ [{description}] 成功")
  
+    @_log_action
     def go_forward(self, **kwargs):
         """
         [关键字] 模拟浏览器的前进按钮。
@@ -982,6 +1042,7 @@ class Keywords:
         self.active_page.wait_for_load_state('domcontentloaded')
         print(f"✓ [{description}] 成功")
  
+    @_log_action
     def drag_and_drop(self, **kwargs):
         """
         [关键字] 将一个元素拖拽到另一个元素上。
@@ -1040,6 +1101,7 @@ class Keywords:
             
         print(f"✓ [{description}] 成功")
 
+    @_log_action
     def click(self, **kwargs):
         """
         [关键字] 在找到的元素上执行单击操作。
@@ -1051,6 +1113,7 @@ class Keywords:
         locator.click()
         print(f"✓ [{description}] 成功")
 
+    @_log_action
     def press(self, **kwargs):
         """
         [关键字] 在指定的元素上模拟按下单个键盘按键。
@@ -1063,6 +1126,7 @@ class Keywords:
         locator.press(key_to_press)
         print(f"✓ [{description}] 成功")
 
+    @_log_action
     def on_input(self, **kwargs):
         """
         [关键字] 向输入框中填入文本。
@@ -1092,6 +1156,7 @@ class Keywords:
         self.active_page.wait_for_timeout(wait_time_sec * 1000)
         _total_sleep_time += wait_time_sec
 
+    @_log_action
     def verify(self, **kwargs):
         """
         [关键字] 通用验证中心，使用Playwright的expect断言。
@@ -1124,6 +1189,7 @@ class Keywords:
         except (PlaywrightTimeoutError, AssertionError) as e:
              pytest.fail(f"✗ 验证失败: {description} - {e}")
 
+    @_log_action
     def screenshot(self, **kwargs):
         """
         [关键字] 对当前目标页面进行截图。

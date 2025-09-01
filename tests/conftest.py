@@ -11,6 +11,8 @@ if project_root not in sys.path:
 # 导入Keywords是为了在最后报告时拿到那个全局变量
 from framework import Keywords as KeywordsModule
 from framework.Keywords import Keywords
+# 导入ReportLogger用于测试步骤记录
+from framework.utils.report_logger import ReportLogger
 
 def pytest_addoption(parser):
     """添加自定义命令行选项"""
@@ -58,12 +60,24 @@ def browser_type_launch_args(browser_type_launch_args, framework_config, request
     }
 
 # --- Fixture 3: 创建 Keywords 实例，并注入运行模式 ---
-def set_running_mode_on_page(page, request):
+def set_running_mode_on_page(page, request, report_logger_name="report_logger"):
     """一个辅助函数，用于将运行模式附加到 page 对象上"""
     running_mode = request.config.cache.get("running_mode", "headed")
     # 我们将模式信息附加到 context 上，这是一个稳定的宿主
     page.context.running_mode = running_mode
-    return Keywords(page)
+    # 获取report_logger实例
+    report_logger = request.getfixturevalue(report_logger_name)
+    return Keywords(page, report_logger)
+
+@pytest.fixture(scope="function")
+def report_logger(page):
+    """创建ReportLogger实例，用于记录测试步骤"""
+    return ReportLogger(page)
+
+@pytest.fixture(scope="session")
+def report_logger_session(page_session):
+    """创建session级别的ReportLogger实例，用于记录测试步骤"""
+    return ReportLogger(page_session)
 
 @pytest.fixture(scope="function")
 def keywords_func(page, request):
@@ -79,7 +93,7 @@ def page_session(browser):
     
 @pytest.fixture(scope="session")
 def keywords_session(page_session, request):
-    return set_running_mode_on_page(page_session, request)
+    return set_running_mode_on_page(page_session, request, "report_logger_session")
 
 
 # --- Hook 4: 在测试结束后，报告 sleep 总时间 ---
@@ -94,3 +108,37 @@ def pytest_sessionfinish(session, exitstatus):
         reporter = session.config.pluginmanager.getplugin('terminalreporter')
         reporter.write_sep("=", "强制等待 (sleep) 耗时统计", yellow=True)
         reporter.write_line(f"在有头模式下, 所有测试中 'sleep' 关键字的总耗时为: {total_sleep:.2f} 秒")
+
+
+# --- Hook 5: 在测试用例执行后，生成详细的HTML报告 ---
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """
+    在测试用例执行后生成详细的HTML报告。
+    这个钩子会在每个测试阶段（setup, call, teardown）都会被调用，
+    我们只在call阶段完成后处理报告生成。
+    """
+    # 先执行默认的报告生成逻辑
+    outcome = yield
+    report = outcome.get_result()
+    
+    # 只在call阶段完成后处理报告生成
+    if report.when == "call":
+        try:
+            # 从item中获取report_logger实例
+            # 如果fixture没有被使用，则会抛出异常，我们直接忽略
+            report_logger = item.funcargs.get("report_logger")
+            
+            # 只有当report_logger存在且有步骤记录时才生成报告
+            if report_logger and report_logger.steps:
+                # 生成HTML内容
+                html_content = report_logger.to_html()
+                
+                # 将HTML内容添加到报告中
+                if hasattr(report, "extra"):
+                    report.extra.append(html_content)
+                else:
+                    report.extra = [html_content]
+        except Exception as e:
+            # 添加错误处理，避免因为报告生成问题影响测试执行
+            print(f"生成详细报告时出错: {e}")
