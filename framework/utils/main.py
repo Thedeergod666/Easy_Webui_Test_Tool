@@ -1,6 +1,8 @@
 # framework/utils/main.py
 import sys
 import os
+import json
+from pathlib import Path
 
 # 添加项目根目录到sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -9,6 +11,64 @@ if project_root not in sys.path:
 
 from framework.utils.ui.main_menu import show_main_menu
 from framework.utils.executor import FunctionExecutor
+
+def ensure_test_config_exists():
+    """
+    确保test_config.json文件存在，如果不存在则创建默认配置
+    """
+    # 获取项目根目录下的test_data路径
+    test_data_dir = Path(project_root) / "test_data"
+    config_file = test_data_dir / "test_config.json"
+    
+    # 默认配置内容
+    default_config = {
+        "visual_mode": {
+            "headed": True,
+            "slow_mo": 50
+        },
+        "test_flows": [
+            {
+                "file_path": "test_data/sample_test.xlsx",
+                "sheet_name": "Sheet1",
+                "description": "示例测试流程（请根据实际需求修改）",
+                "browser": "chromium",
+                "enabled": False
+            }
+        ]
+    }
+    
+    try:
+        # 如果配置文件已存在
+        if config_file.exists():
+            # 尝试读取并验证JSON格式
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    json.load(f)
+                # 格式正确，不显示任何信息
+                return
+            except json.JSONDecodeError:
+                # JSON格式错误，备份原文件
+                backup_file = config_file.with_suffix('.json.backup')
+                try:
+                    config_file.rename(backup_file)
+                    print("[警告] 原配置文件格式错误，已备份为test_config.json.backup并创建新配置")
+                except Exception as e:
+                    print(f"[警告] 备份原文件失败: {e}")
+                    return
+        
+        # 创建test_data目录（如果不存在）
+        test_data_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 创建配置文件
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(default_config, f, ensure_ascii=False, indent=4)
+        
+        print("[成功] 已自动创建默认配置文件: test_data/test_config.json")
+        
+    except PermissionError:
+        print(f"[错误] 无法创建配置文件，权限不足: {config_file}")
+    except Exception as e:
+        print(f"[错误] 创建配置文件时发生错误: {e}")
 
 def show_help():
     """显示帮助信息"""
@@ -52,6 +112,9 @@ def show_help():
 
 def main():
     """主函数"""
+    # 确保test_config.json文件存在
+    ensure_test_config_exists()
+    
     # 检查是否有命令行参数
     if len(sys.argv) > 1:
         # 检查是否是帮助参数
