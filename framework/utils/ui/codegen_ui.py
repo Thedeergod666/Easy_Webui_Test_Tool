@@ -15,9 +15,6 @@ project_root = Path(__file__).parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-# 导入codegen_to_excel模块中的函数
-sys.path.insert(0, str(project_root / "framework" / "utils" / "codegen_to_excel"))
-
 def check_flow_name_exists(flow_name):
     """检查测试流程名称是否已存在"""
     excel_file = project_root / "test_data" / f"{flow_name}.xlsx"

@@ -2,13 +2,12 @@
 import os
 import sys
 
-# 将项目根目录添加到sys.path
+# 添加项目根目录到sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from framework.utils.run_tests.runner import run_tests
-from framework.utils.ui.codegen_ui import convert_from_file, record_and_convert
+from framework.utils.executor import FunctionExecutor
 import json
 
 def view_test_cases():
@@ -81,15 +80,15 @@ def show_main_menu():
         print("    1. Function模式 (软断言，执行所有启用的流程)")
         print()
         print("    2. Session模式  (硬断言，执行指定启用的流程)")
-        print("       示例: 2 1 (执行第一个流程), 2 -1 (执行最后一个流程)")
+        print("       示例: main.bat/main.sh 2 1 (执行第一个流程), main.bat/main.sh 2 -1 (执行最后一个流程)")
         print("    3. Session模式-Browsers (硬断言，指定流程在所有浏览器上执行)")
-        print("       示例: 3 1 (第一个流程在所有浏览器上执行), 3 -1 (最后一个流程在所有浏览器上执行)")
+        print("       示例: main.bat/main.sh 3 1 (第一个流程在所有浏览器上执行), main.bat/main.sh 3 -1 (最后一个流程在所有浏览器上执行)")
         print("    4. Session模式-All (硬断言，执行所有启用的流程)")
         print()
         print("    5. Function模式-Sheets (软断言，执行指定Excel文件中的所有sheet)")
-        print("       示例: 5 1 (执行第一个流程Excel文件中的所有sheet)")
+        print("       示例: main.bat/main.sh 5 1 (执行第一个流程Excel文件中的所有sheet)")
         print("    6. Session模式-Sheets (硬断言，执行指定Excel文件中的所有sheet)")
-        print("       示例: 6 1 (执行第一个流程Excel文件中的所有sheet)")
+        print("       示例: main.bat/main.sh 6 1 (执行第一个流程Excel文件中的所有sheet)")
         print()
         print("  Codegen2Excel工具:")
         print("    7. 从现有Python文件转换")
@@ -124,10 +123,7 @@ def show_main_menu():
             
         if choice in ["1", "2", "3", "4", "5", "6"]:
             # 测试执行模式
-            if index:
-                run_tests(f"{choice} {index}", ci_mode=False)
-            else:
-                run_tests(choice, ci_mode=False)
+            FunctionExecutor.execute_function(choice, index, ci_mode=False)
                 
             # 执行完功能后询问是否返回主菜单
             print("\n功能执行完成。")
@@ -137,7 +133,7 @@ def show_main_menu():
                 break
         elif choice == "7":
             # Codegen: 从现有Python文件转换
-            convert_from_file()
+            FunctionExecutor.execute_function(choice, ci_mode=False)
             
             # 执行完功能后询问是否返回主菜单
             print("\n功能执行完成。")
@@ -147,7 +143,7 @@ def show_main_menu():
                 break
         elif choice == "8":
             # Codegen: 启动Playwright录制并转换
-            record_and_convert()
+            FunctionExecutor.execute_function(choice, ci_mode=False)
             
             # 执行完功能后询问是否返回主菜单
             print("\n功能执行完成。")
@@ -157,7 +153,7 @@ def show_main_menu():
                 break
         elif choice == "9":
             # test_config.json用例快速查看
-            view_test_cases()
+            FunctionExecutor.execute_function(choice, ci_mode=False)
             
             # 执行完功能后询问是否返回主菜单
             print("\n功能执行完成。")
@@ -167,8 +163,7 @@ def show_main_menu():
                 break
         elif choice == "10":
             # 清理残留临时文件
-            from framework.utils.run_tests.runner import cleanup_temp_files
-            cleanup_temp_files(ci_mode=False)
+            FunctionExecutor.execute_function(choice, ci_mode=False)
             
             # 执行完功能后询问是否返回主菜单
             print("\n功能执行完成。")
