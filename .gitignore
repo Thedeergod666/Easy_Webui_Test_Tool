@@ -9,6 +9,7 @@ CRUSH.md
 .crush
 .roomodes
 /.qoder/*
+CLAUDE.md
 
 # 忽略Python缓存文件
 __pycache__/
@@ -30,3 +31,4 @@ __pycache__/
 # 忽略其他不需要的文件
 /demo_easytest/
 /framework/utils/Keywords copy.py
+
