@@ -129,6 +129,19 @@ class UserInteractionMixin:
         print(f"✓ [{description}] 成功")
 
     @_log_action
+    def check(self, **kwargs):
+        """
+        [关键字] 选中复选框或单选框。
+        操作自带智能等待，会等待元素可见、可交互。
+        如果元素已经是选中状态，则不会重复选中。
+        """
+        description = kwargs.get('描述', '选中复选框/单选框')
+        print(f"执行 [{description}]")
+        locator = self._get_locator(**kwargs)
+        locator.check()
+        print(f"✓ [{description}] 成功")
+
+    @_log_action
     def on_input(self, **kwargs):
         """
         [关键字] 向输入框中填入文本。

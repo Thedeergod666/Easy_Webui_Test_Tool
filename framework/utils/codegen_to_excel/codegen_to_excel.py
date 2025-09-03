@@ -17,6 +17,7 @@ ACTION_MAP = {
     'fill': 'on_input',
     'press': 'press',
     'set_input_files': 'upload_file',
+    'check': 'check',
 }
 
 class CodeGenParser(ast.NodeVisitor):
