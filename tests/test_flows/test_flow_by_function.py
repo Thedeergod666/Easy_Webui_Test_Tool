@@ -2,6 +2,15 @@
 import pandas as pd
 import pytest
 import os
+import sys
+
+# 导入执行状态系统
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'framework'))
+from utils.execution_status import (
+    ExecutionStatus, StatusIcons, StatusMessages,
+    format_status_message, is_try_status, is_skip_status, 
+    is_end_status, is_normal_status, get_execution_status
+)
 
 # 单独的function测试用例，可以放在test_flows里快速自定义，方便调试，
 # 长期的用例放在test_data里，用test_flow_by_function_json.py来测试
@@ -49,34 +58,65 @@ def test_business_flow_soft_assert(keywords_func, flow_config):
         
         print(f"\n───步骤 {step_id}: {description} ({keyword})───")
 
-        execution_status = str(test_step.get('执行状态', '')).strip().lower()
-        if execution_status == 'skip':
-            print("✔️ 结果: [跳过]")
+        execution_status = get_execution_status(test_step)
+        
+        # 处理跳过状态
+        if is_skip_status(execution_status):
+            print(format_status_message(StatusIcons.SUCCESS, StatusMessages.SKIP, step_id))
             continue
         
-        if execution_status == 'end':
-             print(f"🔚 在步骤 {step_id} 处标记为结束，终止流程。")
-             break
+        # 处理终止状态
+        if is_end_status(execution_status):
+            print(format_status_message(StatusIcons.END, StatusMessages.END, step_id))
+            print(f"测试流程在步骤 {step_id} 处终止")
+            break
+        
+        # 处理尝试执行状态
+        if is_try_status(execution_status):
+            if not keyword or keyword == '无关键字':
+                print(format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, step_id, "缺少关键字"))
+                continue
+            
+            key_func = getattr(keywords_func, keyword, None)
+            if not key_func:
+                print(format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, step_id, f"关键字 '{keyword}' 不存在"))
+                continue
+            
+            try:
+                key_func(**test_step)
+                print(format_status_message(StatusIcons.SUCCESS, StatusMessages.TRY_SUCCESS, step_id))
+            except Exception as e:
+                print(format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, step_id, str(e)))
+                # 尝试截图但不影响流程
+                try:
+                    error_path = f"try_error_{step_id}.png"
+                    keywords_func.page.screenshot(path=error_path, full_page=True)
+                    print(f"📷  尝试失败截图已保存至: {error_path}")
+                except Exception as se:
+                    print(f"📷  截图失败: {se}")
+            continue
+        
+        # 处理正常执行状态
 
         if not keyword or keyword == '无关键字':
-            print("✔️ 结果: [跳过 - 缺少关键字]")
+            print(format_status_message(StatusIcons.SUCCESS, StatusMessages.SKIP, step_id, "缺少关键字"))
             continue
 
         key_func = getattr(keywords_func, keyword, None)
         if not key_func:
             error_message = f"步骤 '{step_id}: {description}' 失败: 关键字 '{keyword}' 不存在"
-            print(f"❌ 结果: [失败] - 关键字 '{keyword}' 不存在")
+            print(format_status_message(StatusIcons.FAILURE, StatusMessages.FAIL, step_id, f"关键字 '{keyword}' 不存在"))
             errors.append(error_message)
             continue # 继续下一个步骤
         
         try:
             key_func(**test_step)
-            print("✔️ 结果: [通过]")
+            print(format_status_message(StatusIcons.SUCCESS, StatusMessages.PASS, step_id))
         except Exception as e:
             error_path = f"error_{step_id}.png"
             # >> 核心：记录错误，而不是抛出 <<
             error_message = f"步骤 '{step_id}: {description}' 失败: {e}"
-            print(f"❌ 结果: [失败] - {e}")
+            print(format_status_message(StatusIcons.FAILURE, StatusMessages.FAIL, step_id, str(e)))
             errors.append(error_message)
             
             try:
