@@ -66,6 +66,11 @@ def run_pytest_batch(browser, flows_for_browser, test_file_path, ci_mode=False):
     if not os.path.exists(report_date_dir):
         os.makedirs(report_date_dir)
     
+    # 创建screenshots子目录
+    screenshots_dir = os.path.join(report_date_dir, 'screenshots')
+    if not os.path.exists(screenshots_dir):
+        os.makedirs(screenshots_dir)
+    
     # 报告名包含浏览器和状态，调整格式为: report_2025-07-30_17-30-55_firefox_CI_Failed.html
     report_filename = f"report_{timestamp}_{browser}{ci_suffix}.html"
     report_path = os.path.join(report_date_dir, report_filename)
@@ -80,6 +85,8 @@ def run_pytest_batch(browser, flows_for_browser, test_file_path, ci_mode=False):
         "--self-contained-html",
         # 传递临时配置文件路径给测试文件
         f"--flow-config-file={temp_config_path}",
+        # 传递screenshots目录路径
+        f"--screenshots-dir={screenshots_dir}",
         test_file_path
     ]
     

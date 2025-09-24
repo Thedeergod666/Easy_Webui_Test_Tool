@@ -4,6 +4,7 @@ import pytest
 import os
 import json # 1. 导入json模块
 import sys
+from datetime import datetime
 
 # 导入执行状态系统
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'framework'))
@@ -165,7 +166,7 @@ else:
     print("\n[警告] Session测试模式未在 test_config.json 中找到任何启用的测试流程。")
 
 # 逐个执行测试步骤的函数
-def test_single_step(keywords_session, test_step): # <<<< 注意！这里用的是 keywords_session
+def test_single_step(keywords_session, test_step, screenshots_dir_session): # <<<< 注意！这里用的是 keywords_session
     step_id = test_step.get('编号', '未知步骤')
     keyword = test_step.get('关键字')
     description = test_step.get('描述', '')
@@ -203,7 +204,8 @@ def test_single_step(keywords_session, test_step): # <<<< 注意！这里用的�
             print(format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, step_id, str(e)))
             # 尝试截图但不影响流程
             try:
-                error_path = f"try_error_{step_id}.png"
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # 包含毫秒
+                error_path = os.path.join(screenshots_dir_session, f"try_error_{step_id}_{timestamp}.png")
                 keywords_session.active_page.screenshot(path=error_path, full_page=True)
                 print(f"📷  尝试失败截图已保存至: {error_path}")
             except Exception as se:

@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 import os
 import sys
+from datetime import datetime
 
 # 导入执行状态系统
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'framework'))
@@ -31,7 +32,7 @@ TEST_FLOWS = [
  
 
 @pytest.mark.parametrize('flow_config', TEST_FLOWS)
-def test_business_flow_soft_assert(keywords_func, flow_config):
+def test_business_flow_soft_assert(keywords_func, flow_config, screenshots_dir):
     # 从配置字典中取出信息
     excel_file = flow_config["file_path"]
     sheet_name = flow_config["sheet_name"]
@@ -89,7 +90,8 @@ def test_business_flow_soft_assert(keywords_func, flow_config):
                 print(format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, step_id, str(e)))
                 # 尝试截图但不影响流程
                 try:
-                    error_path = f"try_error_{step_id}.png"
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # 包含毫秒
+                    error_path = os.path.join(screenshots_dir, f"try_error_{step_id}_{timestamp}.png")
                     keywords_func.page.screenshot(path=error_path, full_page=True)
                     print(f"📷  尝试失败截图已保存至: {error_path}")
                 except Exception as se:
@@ -113,7 +115,8 @@ def test_business_flow_soft_assert(keywords_func, flow_config):
             key_func(**test_step)
             print(format_status_message(StatusIcons.SUCCESS, StatusMessages.PASS, step_id))
         except Exception as e:
-            error_path = f"error_{step_id}.png"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # 包含毫秒
+            error_path = os.path.join(screenshots_dir, f"error_{step_id}_{timestamp}.png")
             # >> 核心：记录错误，而不是抛出 <<
             error_message = f"步骤 '{step_id}: {description}' 失败: {e}"
             print(format_status_message(StatusIcons.FAILURE, StatusMessages.FAIL, step_id, str(e)))

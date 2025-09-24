@@ -3,6 +3,7 @@ import pytest
 import sys
 import os
 import json
+from datetime import datetime
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
@@ -21,6 +22,12 @@ def pytest_addoption(parser):
         action="store",
         help="指定测试流程配置文件路径"
     )
+    parser.addoption(
+        "--screenshots-dir",
+        action="store",
+        default=".",
+        help="指定截图保存目录路径"
+    )
 
 # --- Fixture 1: 加载JSON配置，只执行一次 ---
 @pytest.fixture(scope="session")
@@ -30,6 +37,17 @@ def framework_config():
         pytest.fail(f"全局配置文件 test_config.json 不存在于 '{config_path}'!")
     with open(config_path, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+# --- Fixture: 截图目录配置 ---
+@pytest.fixture(scope="function")
+def screenshots_dir(request):
+    """获取截图目录路径"""
+    return request.config.getoption("--screenshots-dir")
+
+@pytest.fixture(scope="session")
+def screenshots_dir_session(request):
+    """获取session级别的截图目录路径"""
+    return request.config.getoption("--screenshots-dir")
 
 # --- Fixture 2: 决定浏览器启动参数 (有头/无头/慢动作) ---
 @pytest.fixture(scope="session")
@@ -125,6 +143,97 @@ def pytest_runtest_makereport(item, call):
     # 只在call阶段完成后处理报告生成
     if report.when == "call":
         try:
+            # 处理失败截图的HTML集成
+            if report.failed and hasattr(item, "funcargs"):
+                # 获取截图路径
+                screenshot_path = None
+                
+                # Session模式下的截图处理
+                if "keywords_session" in item.funcargs and "screenshots_dir_session" in item.funcargs:
+                    keywords_session = item.funcargs["keywords_session"]
+                    screenshots_dir_session = item.funcargs["screenshots_dir_session"]
+                    test_step = item.funcargs.get("test_step", {})
+                    step_id = test_step.get('编号', 'unknown_step')
+                    
+                    # 先尝试生成失败截图
+                    try:
+                        if hasattr(keywords_session, 'active_page') and keywords_session.active_page:
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                            screenshot_filename = f"error_{step_id}_{timestamp}.png"
+                            screenshot_path = os.path.join(screenshots_dir_session, screenshot_filename)
+                            
+                            # 确保目录存在
+                            os.makedirs(screenshots_dir_session, exist_ok=True)
+                            
+                            # 生成截图
+                            keywords_session.active_page.screenshot(path=screenshot_path, full_page=True)
+                            print(f"📷  Session模式失败截图已生成: {screenshot_path}")
+                    except Exception as e:
+                        print(f"📷  Session模式生成失败截图失败: {e}")
+                        # 如果生成失败，尝试查找已存在的截图文件
+                        import glob
+                        error_screenshots = glob.glob(os.path.join(screenshots_dir_session, f"error_{step_id}_*.png"))
+                        if error_screenshots:
+                            error_screenshots.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                            screenshot_path = error_screenshots[0]
+                            print(f"📷  Session模式找到已存在的错误截图: {screenshot_path}")
+                
+                # Function模式下的截图处理
+                elif "screenshots_dir" in item.funcargs:
+                    screenshots_dir = item.funcargs["screenshots_dir"]
+                    # 查找最新的错误截图文件
+                    import glob
+                    error_screenshots = glob.glob(os.path.join(screenshots_dir, "error_*.png"))
+                    if error_screenshots:
+                        # 按修改时间排序，获取最新的截图
+                        error_screenshots.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                        screenshot_path = error_screenshots[0]
+                        print(f"📷  Function模式找到错误截图: {screenshot_path}")
+                
+                # 将截图添加到pytest-html报告
+                if screenshot_path and os.path.exists(screenshot_path):
+                    print(f"📷  开始集成截图到HTML报告，截图路径: {screenshot_path}")
+                    
+                    # 使用pytest_html的正确API添加截图
+                    try:
+                        import pytest_html
+                        
+                        # 方法1：使用pytest_html.extras.image()直接添加截图文件
+                        extras = getattr(report, "extras", [])
+                        
+                        # 读取截图文件并转换为base64
+                        import base64
+                        with open(screenshot_path, "rb") as image_file:
+                            image_data = base64.b64encode(image_file.read()).decode()
+                        
+                        # 使用pytest_html.extras.png()添加截图
+                        extras.append(pytest_html.extras.png(image_data, name="失败截图"))
+                        
+                        # 添加额外的HTML信息
+                        screenshot_name = os.path.basename(screenshot_path)
+                        relative_path = f"screenshots/{screenshot_name}"
+                        
+                        extra_html = f'''
+                        <div style="margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background-color: #f8f9fa;">
+                            <h4 style="color: #d9534f; margin-top: 0;">📷 失败截图信息</h4>
+                            <p><strong>截图文件:</strong> <code>{relative_path}</code></p>
+                            <p><strong>截图时间:</strong> {datetime.fromtimestamp(os.path.getmtime(screenshot_path)).strftime('%Y-%m-%d %H:%M:%S')}</p>
+                        </div>
+                        '''
+                        
+                        extras.append(pytest_html.extras.html(extra_html))
+                        
+                        # 确保extras被正确设置到report
+                        report.extras = extras
+                        print(f"📷  ✅ 截图已成功集成到HTML报告，extras数量: {len(extras)}")
+                        
+                    except ImportError:
+                        print(f"📷  ❌ 未安装pytest-html插件，无法集成截图")
+                    except Exception as e:
+                        print(f"📷  ❌ 集成截图时出错: {e}")
+                else:
+                    print(f"📷  截图路径为空或文件不存在: {screenshot_path}")
+            
             # 从item中获取report_logger实例
             # 如果fixture没有被使用，则会抛出异常，我们直接忽略
             report_logger = item.funcargs.get("report_logger")
