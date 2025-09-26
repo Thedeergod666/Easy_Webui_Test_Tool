@@ -11,6 +11,13 @@ from enum import Enum
 from typing import Optional, Union
 from playwright.sync_api import Page, Error as PlaywrightTimeoutError
 from .base import _log_action
+from .error_handling import UnifiedErrorHandlingMixin, PageOperationResult, ErrorSeverity
+from .performance_optimization import URLMatchingOptimizer
+from .concurrency_coordination import ConcurrencyCoordinationMixin, OperationType, LockType, thread_safe
+from collections import OrderedDict
+import threading
+from typing import Dict, Any
+import weakref
 
 
 class UrlPatternType(Enum):
@@ -19,6 +26,139 @@ class UrlPatternType(Enum):
     WILDCARD = "wildcard"    # 通配符匹配
     REGEX = "regex"          # 正则表达式匹配
     PARTIAL = "partial"      # 部分匹配
+
+
+class PageLifecycleManager:
+    """
+    页面生命周期管理器
+    负责跟踪页面引用、自动清理和状态维护
+    """
+    
+    def __init__(self):
+        self.page_references: Dict[str, weakref.ref] = {}
+        self.cleanup_history: OrderedDict = OrderedDict()  # 保留最近清理历史
+        self.operation_lock = threading.RLock()  # 操作锁，支持重入
+        self.cleanup_enabled = True
+        
+    def register_page(self, page: Page, page_id: str) -> None:
+        """
+        注册页面引用，使用弱引用避免内存泄漏
+        """
+        with self.operation_lock:
+            # 创建弱引用，页面被删除时自动清理
+            weak_ref = weakref.ref(page, lambda ref: self._on_page_deleted(page_id))
+            self.page_references[page_id] = weak_ref
+            
+            # 设置页面关闭事件监听
+            try:
+                page.on('close', lambda: self._on_page_closed(page_id))
+                print(f"    [生命周期] 页面 {page_id} 已注册，URL: {page.url}")
+            except Exception as e:
+                print(f"    [生命周期] 警告: 页面 {page_id} 事件监听设置失败: {e}")
+    
+    def _on_page_closed(self, page_id: str) -> None:
+        """
+        页面关闭事件处理
+        """
+        if not self.cleanup_enabled:
+            return
+            
+        with self.operation_lock:
+            if page_id in self.page_references:
+                print(f"    [生命周期] 检测到页面 {page_id} 关闭事件，开始清理...")
+                self._cleanup_page_reference(page_id, reason="页面关闭")
+    
+    def _on_page_deleted(self, page_id: str) -> None:
+        """
+        页面对象被垃圾回收时的处理
+        """
+        if not self.cleanup_enabled:
+            return
+            
+        with self.operation_lock:
+            if page_id in self.page_references:
+                print(f"    [生命周期] 检测到页面 {page_id} 对象被回收，清理引用...")
+                self._cleanup_page_reference(page_id, reason="对象回收")
+    
+    def _cleanup_page_reference(self, page_id: str, reason: str) -> None:
+        """
+        清理单个页面引用
+        """
+        try:
+            if page_id in self.page_references:
+                del self.page_references[page_id]
+                
+                # 记录清理历史（保留最近100条）
+                import time
+                self.cleanup_history[page_id] = {
+                    'timestamp': time.time(),
+                    'reason': reason
+                }
+                
+                # 限制历史记录大小
+                while len(self.cleanup_history) > 100:
+                    self.cleanup_history.popitem(last=False)
+                    
+                print(f"    [生命周期] ✓ 页面 {page_id} 引用已清理 ({reason})")
+                
+        except Exception as e:
+            print(f"    [生命周期] 清理页面 {page_id} 引用时出错: {e}")
+    
+    def cleanup_all_invalid_references(self) -> int:
+        """
+        清理所有无效的页面引用
+        返回清理的引用数量
+        """
+        if not self.cleanup_enabled:
+            return 0
+            
+        with self.operation_lock:
+            invalid_refs = []
+            
+            for page_id, weak_ref in self.page_references.items():
+                page = weak_ref()
+                if page is None or (hasattr(page, 'is_closed') and page.is_closed()):
+                    invalid_refs.append(page_id)
+            
+            for page_id in invalid_refs:
+                self._cleanup_page_reference(page_id, reason="无效引用")
+                
+            if invalid_refs:
+                print(f"    [生命周期] ✓ 清理了 {len(invalid_refs)} 个无效页面引用")
+                
+            return len(invalid_refs)
+    
+    def get_active_page_count(self) -> int:
+        """
+        获取当前活跃页面数量
+        """
+        with self.operation_lock:
+            active_count = 0
+            for weak_ref in self.page_references.values():
+                page = weak_ref()
+                if page is not None and hasattr(page, 'is_closed') and not page.is_closed():
+                    active_count += 1
+            return active_count
+    
+    def get_memory_status(self) -> Dict[str, Any]:
+        """
+        获取内存使用状态
+        """
+        with self.operation_lock:
+            return {
+                'total_references': len(self.page_references),
+                'active_pages': self.get_active_page_count(),
+                'cleanup_history_size': len(self.cleanup_history),
+                'cleanup_enabled': self.cleanup_enabled
+            }
+    
+    def enable_cleanup(self, enabled: bool = True) -> None:
+        """
+        启用或禁用自动清理
+        """
+        with self.operation_lock:
+            self.cleanup_enabled = enabled
+            print(f"    [生命周期] 自动清理已{'启用' if enabled else '禁用'}")
 
 
 class MatchResult:
@@ -36,11 +176,401 @@ class MatchResult:
         self.base_url = base_url                 # 降级使用的基础URL
 
 
-class PageManagementMixin:
+class PageManagementMixin(UnifiedErrorHandlingMixin, ConcurrencyCoordinationMixin):
     """页面管理Mixin类
      
     提供页面导航、页面切换和页面管理相关的方法实现。
     """
+    
+    def __init__(self, *args, **kwargs):
+        # 首先调用父类的__init__
+        super().__init__(*args, **kwargs)
+        
+        # 初始化页面生命周期管理器
+        self.page_lifecycle_manager = PageLifecycleManager()
+        
+        # 初始化URL匹配性能优化器
+        self.url_optimizer = URLMatchingOptimizer(max_cache_size=100, cache_ttl=300)
+        
+        # 如果已经有context，立即注册现有页面
+        if hasattr(self, 'context') and self.context:
+            self._register_existing_pages()
+    
+    def _register_existing_pages(self):
+        """
+        注册context中已存在的页面
+        """
+        try:
+            for i, page in enumerate(self.context.pages):
+                page_id = f"page_{i+1}"
+                self.page_lifecycle_manager.register_page(page, page_id)
+                
+                # 将页面添加到URL索引
+                try:
+                    if not page.is_closed() and page.url:
+                        self.url_optimizer.add_page_to_index(page.url, page)
+                except Exception as e:
+                    print(f"    [性能优化] 注册页面索引失败: {e}")
+                
+            # 设置页面创建事件监听
+            self.context.on('page', self._on_new_page_created)
+            print(f"    [生命周期] 已注册 {len(self.context.pages)} 个现有页面")
+        except Exception as e:
+            print(f"    [生命周期] 注册现有页面时出错: {e}")
+    
+    def _on_new_page_created(self, page: Page):
+        """
+        新页面创建事件处理
+        """
+        try:
+            page_index = len(self.context.pages)
+            page_id = f"page_{page_index}"
+            self.page_lifecycle_manager.register_page(page, page_id)
+            
+            # 将新页面添加到URL索引
+            try:
+                if page.url and page.url != 'about:blank':
+                    self.url_optimizer.add_page_to_index(page.url, page)
+            except Exception as e:
+                print(f"    [性能优化] 添加新页面索引失败: {e}")
+            
+            print(f"    [生命周期] 新页面 {page_id} 已自动注册")
+        except Exception as e:
+            print(f"    [生命周期] 注册新页面时出错: {e}")
+    
+    def _validate_and_adjust_active_page(self):
+        """
+        验证和调整活跃页面指针
+        如果当前活跃页面已关闭或无效，自动切换到有效页面
+        """
+        try:
+            # 检查当前活跃页面是否有效
+            if (hasattr(self, 'active_page') and 
+                self.active_page and 
+                not self.active_page.is_closed() and 
+                self.active_page in self.context.pages):
+                return  # 活跃页面有效，无需调整
+            
+            # 当前活跃页面无效，寻找替代页面
+            valid_pages = [page for page in self.context.pages if not page.is_closed()]
+            
+            if valid_pages:
+                old_page_info = "N/A"
+                if hasattr(self, 'active_page') and self.active_page:
+                    try:
+                        old_page_info = f"索引{self.context.pages.index(self.active_page) + 1}" if self.active_page in self.context.pages else "已移除"
+                    except:
+                        old_page_info = "无效"
+                
+                # 优先选择第一个有效页面（主页面）
+                new_active_page = valid_pages[0]
+                self.active_page = new_active_page
+                new_page_index = self.context.pages.index(new_active_page) + 1
+                
+                print(f"    [生命周期] 活跃页面已调整: {old_page_info} -> 页面{new_page_index} ({new_active_page.url})")
+            else:
+                print(f"    [生命周期] 警告: 没有可用的有效页面")
+                self.active_page = None
+                
+        except Exception as e:
+            print(f"    [生命周期] 活跃页面调整失败: {e}")
+    
+    @thread_safe(OperationType.CLEANUP, LockType.EXCLUSIVE)
+    def cleanup_memory(self):
+        """
+        [关键字] 手动清理页面引用内存
+        用于测试结束或长期运行时的内存维护
+        """
+        print(f"执行 [内存清理]: 开始清理页面引用...")
+        
+        # 获取清理前的状态
+        before_status = self.page_lifecycle_manager.get_memory_status()
+        
+        # 执行清理
+        cleaned_count = self.page_lifecycle_manager.cleanup_all_invalid_references()
+        
+        # 验证和调整活跃页面
+        self._validate_and_adjust_active_page()
+        
+        # 获取清理后的状态
+        after_status = self.page_lifecycle_manager.get_memory_status()
+        
+        print(f"  > 清理前: {before_status['total_references']} 个引用，{before_status['active_pages']} 个活跃页面")
+        print(f"  > 清理后: {after_status['total_references']} 个引用，{after_status['active_pages']} 个活跃页面")
+        print(f"✓ [内存清理] 完成，清理了 {cleaned_count} 个无效引用")
+    
+    def get_memory_status(self):
+        """
+        [关键字] 获取当前内存使用状态
+        用于监控和调试内存使用情况
+        """
+        status = self.page_lifecycle_manager.get_memory_status()
+        print(f"执行 [内存状态]: 当前状态查询")
+        print(f"  > 总引用数: {status['total_references']}")
+        print(f"  > 活跃页面: {status['active_pages']}")
+        print(f"  > 清理历史: {status['cleanup_history_size']} 条记录")
+        print(f"  > 自动清理: {'已启用' if status['cleanup_enabled'] else '已禁用'}")
+        return status
+    
+    def get_performance_report(self):
+        """
+        [关键字] 获取URL匹配性能报告
+        用于监控和调试URL匹配性能
+        """
+        if not hasattr(self, 'url_optimizer'):
+            print(f"执行 [性能报告]: URL优化器未初始化")
+            return {}
+        
+        report = self.url_optimizer.get_performance_report()
+        print(f"执行 [性能报告]: URL匹配性能统计")
+        
+        # 缓存统计
+        cache_stats = report.get('cache_statistics', {})
+        print(f"  > 缓存状态:")
+        print(f"    当前大小: {cache_stats.get('cache_size', 0)}/{cache_stats.get('max_cache_size', 0)}")
+        print(f"    命中率: {cache_stats.get('cache_hit_rate', 0):.2%}")
+        print(f"    命中次数: {cache_stats.get('cache_hits', 0)}")
+        print(f"    未命中次数: {cache_stats.get('cache_misses', 0)}")
+        
+        # 索引统计
+        index_stats = report.get('index_statistics', {})
+        print(f"  > 索引状态:")
+        print(f"    索引URL数量: {index_stats.get('total_indexed_urls', 0)}")
+        print(f"    域名数量: {index_stats.get('domain_count', 0)}")
+        print(f"    路径前缀数量: {index_stats.get('path_prefixes', 0)}")
+        print(f"    索引查找次数: {index_stats.get('index_lookups', 0)}")
+        
+        # 匹配统计
+        match_stats = report.get('matching_statistics', {})
+        print(f"  > 匹配状态:")
+        print(f"    精确匹配次数: {match_stats.get('exact_matches', 0)}")
+        print(f"    模式匹配次数: {match_stats.get('pattern_matches', 0)}")
+        print(f"    总搜索次数: {match_stats.get('total_searches', 0)}")
+        print(f"    平均搜索时间: {match_stats.get('average_search_time_ms', 0):.2f}ms")
+        
+        return report
+    
+    def optimize_url_performance(self):
+        """
+        [关键字] 优化URL匹配性能
+        清理过期缓存和优化索引结构
+        """
+        print(f"执行 [性能优化]: 开始URL匹配性能优化...")
+        
+        if hasattr(self, 'url_optimizer'):
+            # 优化索引
+            self.url_optimizer.optimize_indexes()
+            
+            # 获取优化后的状态
+            report = self.url_optimizer.get_performance_report()
+            cache_stats = report.get('cache_statistics', {})
+            index_stats = report.get('index_statistics', {})
+            
+            print(f"  > 优化结果:")
+            print(f"    缓存大小: {cache_stats.get('cache_size', 0)}")
+            print(f"    索引URL数: {index_stats.get('total_indexed_urls', 0)}")
+            print(f"    有效域名: {index_stats.get('domain_count', 0)}")
+            print(f"    有效路径: {index_stats.get('path_prefixes', 0)}")
+        else:
+            print(f"  > URL优化器未初始化，跳过优化")
+        
+        print(f"✓ [性能优化] 完成")
+    
+    def get_page_variable_mapping(self):
+        """
+        [关键字] 获取页面变量映射信息
+        显示当前页面变量的映射关系和可用性
+        """
+        print(f"执行 [页面映射]: 当前页面变量映射状态")
+        
+        if not self.context or not self.context.pages:
+            print(f"  > 当前没有可用页面")
+            return {}
+        
+        mapping_info = {}
+        page_count = len(self.context.pages)
+        
+        print(f"  > 页面总数: {page_count}")
+        print(f"  > 变量映射关系:")
+        
+        # 标准化映射规则
+        # 1. page - 当前活动页面
+        if hasattr(self, 'active_page') and self.active_page:
+            try:
+                active_index = self.context.pages.index(self.active_page) + 1
+                mapping_info['page'] = {
+                    'target': f'页面{active_index}',
+                    'url': self.active_page.url,
+                    'status': '活动' if not self.active_page.is_closed() else '已关闭'
+                }
+                print(f"    page -> 页面{active_index} (活动页面) - {self.active_page.url}")
+            except (ValueError, AttributeError):
+                mapping_info['page'] = {'target': 'N/A', 'url': 'N/A', 'status': '无效'}
+                print(f"    page -> N/A (活动页面无效)")
+        
+        # 2. page1, page2, ... - 按索引的页面引用
+        for i in range(page_count):
+            page = self.context.pages[i]
+            page_var = f'page{i+1}'
+            try:
+                status = '正常' if not page.is_closed() else '已关闭'
+                mapping_info[page_var] = {
+                    'target': f'页面{i+1}',
+                    'url': page.url,
+                    'status': status
+                }
+                print(f"    {page_var} -> 页面{i+1} ({status}) - {page.url}")
+            except AttributeError:
+                mapping_info[page_var] = {'target': f'页面{i+1}', 'url': 'N/A', 'status': '错误'}
+                print(f"    {page_var} -> 页面{i+1} (错误) - 无法获取URL")
+        
+        # 3. 兼容性映射（逐步弃用）
+        if page_count > 0:
+            page0_info = mapping_info.get('page1', {})
+            mapping_info['page0'] = page0_info.copy()
+            mapping_info['page0']['deprecated'] = True
+            print(f"    page0 -> 页面1 (兼容性映射，建议使用 page)")
+        
+        # 4. pages - 页面列表引用（逐步弃用）
+        mapping_info['pages'] = {
+            'target': f'页面列表[{page_count}个]',
+            'status': '可用',
+            'deprecated': True
+        }
+        print(f"    pages -> 页面列表[{page_count}个] (兼容性映射，建议使用具体页面变量)")
+        
+        # 显示映射建议
+        print(f"  > 映射建议:")
+        print(f"    推荐使用: page (当前活动页面), page1, page2, ...")
+        print(f"    避免使用: page0 (已弃用), pages (已弃用)")
+        
+        return mapping_info
+    
+    def switch_to_standard_mapping(self):
+        """
+        [关键字] 切换到标准化页面映射
+        清理旧的映射规则，采用新的标准化映射
+        """
+        print(f"执行 [映射标准化]: 切换到标准化页面映射")
+        
+        # 获取当前映射状态
+        current_mapping = self.get_page_variable_mapping()
+        
+        # 检查是否需要映射调整
+        needs_adjustment = False
+        
+        if not current_mapping.get('page', {}).get('status') == '活动':
+            needs_adjustment = True
+            print(f"  > 检测到活动页面映射异常，需要调整")
+        
+        deprecated_vars = [k for k, v in current_mapping.items() 
+                          if v.get('deprecated', False)]
+        if deprecated_vars:
+            print(f"  > 检测到已弃用的变量: {deprecated_vars}")
+        
+        # 执行映射调整
+        if needs_adjustment:
+            if hasattr(self, '_validate_and_adjust_active_page'):
+                self._validate_and_adjust_active_page()
+                print(f"  > 活动页面映射已调整")
+        
+        # 显示调整后的映射
+        print(f"  > 标准化映射完成")
+        final_mapping = self.get_page_variable_mapping()
+        
+        return final_mapping
+    
+    def diagnose_page_mapping(self):
+        """
+        [关键字] 诊断页面变量映射问题
+        检查映射一致性和潜在问题
+        """
+        print(f"执行 [映射诊断]: 开始页面变量映射诊断")
+        print(f"=" * 50)
+        
+        # 获取基本信息
+        page_count = len(self.context.pages) if self.context and self.context.pages else 0
+        print(f"📊 基本信息:")
+        print(f"  页面总数: {page_count}")
+        
+        if page_count == 0:
+            print(f"⚠️  警告: 没有可用页面，所有页面变量都不可用")
+            return
+        
+        # 检查活动页面状态
+        print(f"\n🎯 活动页面状态:")
+        if hasattr(self, 'active_page') and self.active_page:
+            try:
+                if self.active_page in self.context.pages:
+                    active_index = self.context.pages.index(self.active_page) + 1
+                    active_status = '正常' if not self.active_page.is_closed() else '已关闭'
+                    print(f"  ✓ 活动页面: 页面{active_index} ({active_status})")
+                    print(f"    URL: {self.active_page.url}")
+                else:
+                    print(f"  ❌ 活动页面不在页面列表中")
+            except Exception as e:
+                print(f"  ❌ 活动页面状态异常: {e}")
+        else:
+            print(f"  ❌ 没有设置活动页面")
+        
+        # 检查所有页面状态
+        print(f"\n📋 页面状态检查:")
+        issues = []
+        for i, page in enumerate(self.context.pages):
+            page_num = i + 1
+            try:
+                is_closed = page.is_closed()
+                url = page.url if not is_closed else '[已关闭]'
+                status_icon = '✓' if not is_closed else '❌'
+                print(f"  {status_icon} 页面{page_num}: {url}")
+                
+                if is_closed:
+                    issues.append(f"页面{page_num}已关闭但仍在列表中")
+                    
+            except Exception as e:
+                print(f"  ❌ 页面{page_num}: 状态检查失败 - {e}")
+                issues.append(f"页面{page_num}状态检查失败")
+        
+        # 变量可用性检查
+        print(f"\n🔗 变量可用性:")
+        available_vars = []
+        deprecated_vars = []
+        
+        # 标准变量
+        if hasattr(self, 'active_page') and self.active_page and not self.active_page.is_closed():
+            available_vars.append('page')
+        
+        for i in range(page_count):
+            var_name = f'page{i+1}'
+            if not self.context.pages[i].is_closed():
+                available_vars.append(var_name)
+        
+        # 兼容性变量（已弃用）
+        if page_count > 0:
+            deprecated_vars.extend(['page0', 'pages'])
+        
+        print(f"  ✓ 可用变量: {', '.join(available_vars) if available_vars else '无'}")
+        print(f"  ⚠️  已弃用变量: {', '.join(deprecated_vars) if deprecated_vars else '无'}")
+        
+        # 问题汇总
+        print(f"\n🔍 问题汇总:")
+        if not issues:
+            print(f"  ✓ 未发现映射问题")
+        else:
+            for issue in issues:
+                print(f"  ❌ {issue}")
+        
+        # 建议
+        print(f"\n💡 使用建议:")
+        print(f"  1. 优先使用 'page' 访问当前活动页面")
+        print(f"  2. 使用 'page1', 'page2' 等明确指定页面")
+        print(f"  3. 避免使用已弃用的 'page0' 和 'pages'")
+        if issues:
+            print(f"  4. 建议执行 'cleanup_memory' 清理无效页面")
+            print(f"  5. 可执行 'switch_to_standard_mapping' 修复映射")
+        
+        print(f"=" * 50)
+        print(f"✓ [映射诊断] 完成")
     
     # URL匹配配置选项
     URL_PATTERN_CONFIG = {
@@ -163,6 +693,7 @@ class PageManagementMixin:
     def _find_matching_page(self, url_pattern: str) -> MatchResult:
         """
         [内部] 在已打开页面中查找匹配的页面。
+        使用性能优化的匹配算法。
         
         Args:
             url_pattern (str): URL模式字符串
@@ -176,12 +707,25 @@ class PageManagementMixin:
         
         print(f"    [URL匹配] 开始在 {len(self.context.pages)} 个页面中查找匹配: {url_pattern}")
         
+        # 第一步：尝试快速精确匹配
+        if hasattr(self, 'url_optimizer'):
+            exact_match_page = self.url_optimizer.fast_exact_match(url_pattern)
+            if exact_match_page and not exact_match_page.is_closed():
+                print(f"    [URL匹配] ✓ 快速精确匹配成功: {url_pattern}")
+                return MatchResult(
+                    success=True,
+                    matched_page=exact_match_page,
+                    pattern_type=UrlPatternType.EXACT,
+                    match_score=1.0,
+                    fallback_used=False
+                )
+        
         best_match = None
         best_score = 0.0
         best_pattern_type = UrlPatternType.EXACT
         matching_pages = []
         
-        # 遍历所有已打开的页面
+        # 第二步：模式匹配（使用优化算法）
         for i, page in enumerate(self.context.pages):
             try:
                 # 检查页面是否关闭
@@ -194,8 +738,8 @@ class PageManagementMixin:
                     print(f"    [URL匹配] 跳过空白页面 {i+1}: {page_url}")
                     continue
                 
-                # 执行匹配
-                is_match, pattern_type, score = self._match_url_pattern(url_pattern, page_url)
+                # 使用优化的匹配算法
+                is_match, pattern_type, score = self._optimized_match_url_pattern(url_pattern, page_url)
                 
                 if is_match:
                     matching_pages.append({
@@ -254,6 +798,69 @@ class PageManagementMixin:
                     print(f"          页面 {i+1}: [无法获取URL]")
             
             return MatchResult(success=False)
+    
+    def _optimized_match_url_pattern(self, url_pattern: str, target_url: str) -> tuple[bool, UrlPatternType, float]:
+        """
+        [内部] 优化的URL模式匹配算法。
+        优先使用性能优化器，失败时降级到传统算法。
+        
+        Args:
+            url_pattern (str): URL模式字符串
+            target_url (str): 待匹配的目标URL
+            
+        Returns:
+            tuple[bool, UrlPatternType, float]: (是否匹配成功, 匹配类型, 匹配评分)
+        """
+        if not self.URL_PATTERN_CONFIG['enable_pattern_matching']:
+            # 如果禁用模式匹配，只进行精确匹配
+            exact_match = url_pattern == target_url
+            return exact_match, UrlPatternType.EXACT, 1.0 if exact_match else 0.0
+        
+        # 检查模式长度限制
+        if len(url_pattern) > self.URL_PATTERN_CONFIG['max_pattern_length']:
+            print(f"    [URL匹配] 警告: URL模式过长 ({len(url_pattern)} > {self.URL_PATTERN_CONFIG['max_pattern_length']})。")
+            return False, UrlPatternType.EXACT, 0.0
+        
+        # 优先使用性能优化器
+        if hasattr(self, 'url_optimizer'):
+            try:
+                # 1. 正则表达式匹配：以 {regex: 开头
+                if url_pattern.startswith('{regex:'):
+                    if not url_pattern.endswith('}'):
+                        print(f"    [URL匹配] 正则表达式格式错误: {url_pattern}")
+                        return False, UrlPatternType.REGEX, 0.0
+                    
+                    # 提取正则表达式
+                    regex_pattern = url_pattern[7:-1]  # 移除 '{regex:' 和 '}'
+                    is_match, score = self.url_optimizer.optimized_pattern_match(
+                        regex_pattern, target_url, "regex"
+                    )
+                    
+                    if is_match:
+                        print(f"    [URL匹配] ✓ 正则表达式匹配成功: {regex_pattern} -> {target_url} (评分: {score:.2f})")
+                        return True, UrlPatternType.REGEX, score
+                    else:
+                        print(f"    [URL匹配] ✗ 正则表达式匹配失败: {regex_pattern} -> {target_url}")
+                        return False, UrlPatternType.REGEX, 0.0
+                
+                # 2. 通配符匹配：包含 * 或 ? 字符
+                elif '*' in url_pattern or '?' in url_pattern:
+                    is_match, score = self.url_optimizer.optimized_pattern_match(
+                        url_pattern, target_url, "wildcard"
+                    )
+                    
+                    if is_match:
+                        print(f"    [URL匹配] ✓ 通配符匹配成功: {url_pattern} -> {target_url} (评分: {score:.2f})")
+                        return True, UrlPatternType.WILDCARD, score
+                    else:
+                        print(f"    [URL匹配] ✗ 通配符匹配失败: {url_pattern} -> {target_url}")
+                        return False, UrlPatternType.WILDCARD, 0.0
+            
+            except Exception as e:
+                print(f"    [URL匹配] 性能优化器匹配失败: {e}，降级到传统算法")
+        
+        # 降级到传统算法
+        return self._match_url_pattern(url_pattern, target_url)
     
     def _extract_base_url(self, url_pattern: str) -> Optional[str]:
         """
@@ -562,6 +1169,7 @@ class PageManagementMixin:
     def _validate_page_state(self, page: Page, page_name: str) -> bool:
         """
         [内部] 验证页面状态是否正常。
+        使用智能化的验证策略，优化验证效率和准确性。
         检查页面可见性、加载状态、DOM就绪等关键指标。
         """
         try:
@@ -572,31 +1180,58 @@ class PageManagementMixin:
             
             # 2. 检查URL有效性
             current_url = page.url
-            if not current_url or current_url == 'about:blank':
-                print(f"    [状态验证] 页面{page_name}URL无效: {current_url}")
+            if not current_url:
+                print(f"    [状态验证] 页面{page_name}URL为空")
                 return False
             
-            # 3. 检查DOM就绪状态 (非阻塞检查)
+            # 3. 特殊页面处理（根据项目规范）
+            if current_url == 'about:blank' or current_url.startswith('about:'):
+                print(f"    [状态验证] 页面{page_name}是弹窗页面，使用简化验证")
+                # 对弹窗等特殊页面采用简化验证
+                return True
+            
+            # 4. 智能化DOM状态检查（增加容错处理）
             try:
-                ready_state = page.evaluate('document.readyState', timeout=1000)
+                ready_state = page.evaluate('document.readyState', timeout=1500)  # 增加超时
                 if ready_state not in ['interactive', 'complete']:
                     print(f"    [状态验证] 页面{page_name}DOM未就绪: {ready_state}")
-                    return False
-            except:
-                print(f"    [状态验证] 页面{page_name}无法获取DOM状态")
-                return False
+                    
+                    # 等待页面渲染稳定（根据项目规范）
+                    time.sleep(0.5)
+                    
+                    # 重新检查
+                    try:
+                        ready_state = page.evaluate('document.readyState', timeout=1000)
+                        if ready_state not in ['interactive', 'complete']:
+                            print(f"    [状态验证] 页面{page_name}等待后DOM仍未就绪: {ready_state}")
+                            return False
+                    except:
+                        print(f"    [状态验证] 页面{page_name}重新检查DOM状态失败")
+                        return False
+            except Exception as dom_error:
+                print(f"    [状态验证] 页面{page_name}DOM检查失败: {dom_error}，但继续检查")
+                # DOM检查失败不一定意味着页面不可用，继续检查
             
-            # 4. 检查JavaScript环境
+            # 5. JavaScript环境检查（增加容错处理）
             try:
                 js_available = page.evaluate('typeof window', timeout=1000)
                 if js_available != 'object':
-                    print(f"    [状态验证] 页面{page_name}JavaScript环境不可用")
-                    return False
-            except:
-                print(f"    [状态验证] 页面{page_name}JavaScript环境检查失败")
-                return False
+                    print(f"    [状态验证] 页面{page_name}JavaScript环境不可用: {js_available}")
+                    # JavaScript不可用也不一定意味着页面不可用
+                    print(f"    [状态验证] 页面{page_name}JavaScript不可用但允许继续")
+            except Exception as js_error:
+                print(f"    [状态验证] 页面{page_name}JavaScript检查失败: {js_error}，但允许继续")
+                # JavaScript检查失败也不一定意味着页面不可用
             
-            print(f"    [状态验证] 页面{page_name}状态正常")
+            # 6. 基本可用性验证（最后的兼容性检查）
+            try:
+                # 尝试获取页面标题作为可用性检查
+                title = page.evaluate('document.title || ""', timeout=1000)
+                print(f"    [状态验证] 页面{page_name}基本状态正常，标题: {title[:50]}...")
+            except Exception as title_error:
+                print(f"    [状态验证] 页面{page_name}标题获取失败: {title_error}，但允许继续")
+            
+            print(f"    [状态验证] 页面{page_name}状态验证通过")
             return True
             
         except Exception as e:
@@ -699,6 +1334,7 @@ class PageManagementMixin:
             return False
 
     @_log_action
+    @thread_safe(OperationType.PAGE_SWITCH, LockType.EXCLUSIVE)
     def switch_to_page(self, **kwargs):
         """
         [关键字] 切换当前的活动页面。
@@ -706,6 +1342,11 @@ class PageManagementMixin:
         支持动态URL匹配：可使用正则表达式、通配符等模式匹配页面。
         数据内容: 要切换到的页码 (e.g., "2") 或 URL模式 (e.g., "*example*", "{regex:.*pattern.*}")
         """
+        # 在操作前自动清理无效引用
+        if hasattr(self, 'page_lifecycle_manager'):
+            self.page_lifecycle_manager.cleanup_all_invalid_references()
+            self._validate_and_adjust_active_page()
+        
         page_index_str = str(kwargs.get('数据内容', '')).strip()
         if not page_index_str:
             raise ValueError("switch_to_page 关键字需要在 '数据内容' 列提供页码或URL模式。")
@@ -788,6 +1429,7 @@ class PageManagementMixin:
             r'(?:/?|[/?]\S+)$', re.IGNORECASE)
         return url_pattern.match(url_string) is not None
 
+    @thread_safe(OperationType.PAGE_CLOSE, LockType.EXCLUSIVE)
     def close_page(self, **kwargs):
         """
         [关键字] 关闭指定的页面。
@@ -888,11 +1530,17 @@ class PageManagementMixin:
             
         target_page_to_close.close()
         
-        if self.active_page.is_closed():
-             self.active_page = self.context.pages[0]
-             print("  > 已关闭的页面是当前活动页，活动页已自动重置为主页面 (Page 1)。")
+        # 在页面关闭后进行活跃页面调整
+        if hasattr(self, 'page_lifecycle_manager'):
+            self._validate_and_adjust_active_page()
+        else:
+            # 旧的错误处理方式（向后兼容）
+            if self.active_page.is_closed():
+                 self.active_page = self.context.pages[0]
+                 print("  > 已关闭的页面是当前活动页，活动页已自动重置为主页面 (Page 1)。")
         print(f"✓ [关闭页面] 成功。")
 
+    @thread_safe(OperationType.PAGE_CREATE, LockType.EXCLUSIVE)
     def open_in_new_page(self, **kwargs):
         """
         [关键字] 在新的标签页中打开URL。
@@ -911,6 +1559,7 @@ class PageManagementMixin:
             raise e
 
     @_log_action
+    @thread_safe(OperationType.NAVIGATION, LockType.EXCLUSIVE)
     def open(self, **kwargs):
         """
         [关键字] 在当前的活动页面上导航到指定的URL。

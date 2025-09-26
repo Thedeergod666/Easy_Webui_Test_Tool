@@ -11,6 +11,7 @@ from .element_locator import ElementLocatorMixin
 from .user_interaction import UserInteractionMixin
 from .verification import VerificationMixin
 from .test_utilities import TestUtilitiesMixin
+from .error_handling import UnifiedErrorHandlingMixin
 
 # 通过多重继承组合各个Mixin创建统一的Keywords主类
 class Keywords(Keywords, PageManagementMixin, ElementLocatorMixin,
@@ -19,7 +20,11 @@ class Keywords(Keywords, PageManagementMixin, ElementLocatorMixin,
     
     通过多重继承组合各个功能模块的Mixin类，提供完整的功能接口。
     """
-    pass
+    
+    def __init__(self, *args, **kwargs):
+        """确保所有Mixin正确初始化"""
+        super().__init__(*args, **kwargs)
+        # PageManagementMixin的初始化会自动设置生命周期管理器
 
 # 定义模块的公共接口
 __all__ = [

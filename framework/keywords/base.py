@@ -88,3 +88,6 @@ class Keywords:
         # 从上下文中获取运行模式
         self.mode = getattr(self.context, 'running_mode', 'headed')
         self.expect = expect
+        
+        # 初始化页面生命周期管理器（在Mixin中实现）
+        # 这里不直接初始化，由PageManagementMixin负责
