@@ -138,19 +138,16 @@ def test_business_flow_soft_assert(keywords_func, flow_config, screenshots_dir):
                 print(format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, step_id, f"关键字 '{keyword}' 不存在"))
                 continue
             
+            # 设置截图目录以支持try状态失败截图
+            keywords_func.screenshots_dir = screenshots_dir
+            
+            # 直接调用关键字方法，让_log_action装饰器处理try状态异常
             try:
                 key_func(**test_step)
                 print(format_status_message(StatusIcons.SUCCESS, StatusMessages.TRY_SUCCESS, step_id))
-            except Exception as e:
-                print(format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, step_id, str(e)))
-                # 尝试截图但不影响流程
-                try:
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # 包含毫秒
-                    error_path = os.path.join(screenshots_dir, f"try_error_{step_id}_{timestamp}.png")
-                    keywords_func.active_page.screenshot(path=error_path, full_page=True)
-                    print(f"📷  尝试失败截图已保存至: {error_path}")
-                except Exception as se:
-                    print(f"📷  截图失败: {se}")
+            except SystemExit:
+                # pytest.skip()会引发SystemExit，这是正常的try状态跳过
+                print(format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, step_id))
             continue
 
         # 处理正常执行状态

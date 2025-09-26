@@ -155,6 +155,52 @@ def pytest_runtest_makereport(item, call):
                     test_step = item.funcargs.get("test_step", {})
                     step_id = test_step.get('编号', 'unknown_step')
                     
+                    # 检查是否有try状态失败的截图
+                    try_screenshots = []
+                    if hasattr(keywords_session, '_try_failure_screenshots'):
+                        try_screenshots = keywords_session._try_failure_screenshots
+                    
+                    # 先处理try状态失败的截图
+                    for try_screenshot in try_screenshots:
+                        try_path = try_screenshot['path']
+                        try_step_id = try_screenshot['step_id']
+                        try_timestamp = try_screenshot['timestamp']
+                        
+                        if os.path.exists(try_path):
+                            print(f"📷  处理Try失败截图: {try_path}")
+                            
+                            # 将try失败截图添加到报告
+                            try:
+                                import pytest_html
+                                import base64
+                                
+                                extras = getattr(report, "extras", [])
+                                
+                                with open(try_path, "rb") as image_file:
+                                    image_data = base64.b64encode(image_file.read()).decode()
+                                
+                                extras.append(pytest_html.extras.png(image_data, name=f"Try失败截图 - 步骤 {try_step_id}"))
+                                
+                                # 添加try失败的HTML信息
+                                try_html = f'''
+                                <div style="margin: 10px 0; padding: 10px; border-left: 4px solid #ff9800; background-color: #fff3cd;">
+                                    <h4 style="color: #856404; margin-top: 0;">⚠️ Try状态失败截图</h4>
+                                    <p><strong>步骤ID:</strong> {try_step_id}</p>
+                                    <p><strong>失败时间:</strong> {try_timestamp}</p>
+                                    <p><strong>截图文件:</strong> <code>{os.path.basename(try_path)}</code></p>
+                                    <p><strong>状态:</strong> <span style="color: #ff9800;">尝试失败但已跳过</span></p>
+                                </div>
+                                '''
+                                
+                                extras.append(pytest_html.extras.html(try_html))
+                                report.extras = extras
+                                
+                                print(f"📷  ✅ Try失败截图已集成到HTML报告: {try_step_id}")
+                                
+                            except Exception as e:
+                                print(f"📷  ❌ 集成Try失败截图时出错: {e}")
+                    
+                    # 然后处理普通的失败截图
                     # 先尝试生成失败截图
                     try:
                         if hasattr(keywords_session, 'active_page') and keywords_session.active_page:

@@ -41,9 +41,13 @@ class ElementLocatorMixin:
         """
         [内部] 使用AST解释器安全地执行Codegen字符串。
         确保只在给定的page对象上执行，防止不安全代码。
+        支持智能化的页面前缀处理，自动修复错误的前缀格式。
         """
         try:
-            full_code_to_parse = f"page.{code_str}"
+            # 智能化Codegen解析：检测并修复页面前缀错误
+            processed_code = self._process_codegen_prefix(code_str)
+            
+            full_code_to_parse = f"page.{processed_code}"
             tree = ast.parse(full_code_to_parse, mode='eval')
             safe_scope = {'page': page_obj}
             result = self._execute_codegen_node(tree.body, safe_scope)
@@ -52,6 +56,41 @@ class ElementLocatorMixin:
             return result
         except Exception as e:
             raise ValueError(f"解析或执行 Codegen 字符串 '{code_str}' 失败: {e}")
+    
+    def _process_codegen_prefix(self, code_str: str) -> str:
+        """
+        [内部] 智能化处理Codegen字符串的页面前缀。
+        检测并移除错误的页面前缀（如page13.、page1.等），确保正确的前缀格式。
+        
+        Args:
+            code_str: 原始的codegen字符串
+            
+        Returns:
+            处理后的codegen字符串
+        """
+        if not code_str or not isinstance(code_str, str):
+            return code_str
+            
+        # 使用正则表达式检测错误的页面前缀模式
+        error_prefix_pattern = r'^page\d+\.'
+        
+        if re.match(error_prefix_pattern, code_str):
+            # 检测到错误前缀，移除它
+            original_code = code_str
+            processed_code = re.sub(error_prefix_pattern, '', code_str)
+            print(f"    [Codegen智能修复] 检测到错误前缀，已自动修复:")
+            print(f"    [Codegen智能修复] 原始: {original_code}")
+            print(f"    [Codegen智能修复] 修复后: {processed_code}")
+            return processed_code
+        
+        # 检查是否已经以page.开头，如果是则移除，避免重复前缀
+        if code_str.startswith('page.'):
+            processed_code = code_str[5:]  # 移除'page.'前缀
+            print(f"    [Codegen智能修复] 移除重复前缀: page.{code_str} -> {processed_code}")
+            return processed_code
+            
+        # 正常情况，返回原始字符串
+        return code_str
  
     def _get_locator(self, **kwargs) -> Locator:
         """

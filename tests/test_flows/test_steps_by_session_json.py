@@ -166,7 +166,7 @@ else:
     print("\n[警告] Session测试模式未在 test_config.json 中找到任何启用的测试流程。")
 
 # 逐个执行测试步骤的函数
-def test_single_step(keywords_session, test_step, screenshots_dir_session): # <<<< 注意！这里用的是 keywords_session
+def test_single_step(keywords_session, test_step, screenshots_dir_session):
     step_id = test_step.get('编号', '未知步骤')
     keyword = test_step.get('关键字')
     description = test_step.get('描述', '')
@@ -182,48 +182,37 @@ def test_single_step(keywords_session, test_step, screenshots_dir_session): # <<
         print(format_status_message(StatusIcons.END, StatusMessages.END, step_id))
         pytest.exit(f"测试流程在步骤 {step_id} 处终止")
     
-    # 处理尝试执行状态
-    if is_try_status(execution_status):
-        if not keyword:
+    # 检查关键字是否存在
+    if not keyword:
+        if is_try_status(execution_status):
             print(format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, step_id, "关键字为空"))
             pytest.skip(f"步骤 {step_id} 尝试失败但已跳过 - 关键字为空")
-            return
-            
-        key_func = getattr(keywords_session, keyword, None)
-        if not key_func:
-            print(format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, step_id, f"关键字 '{keyword}' 不存在"))
-            pytest.skip(f"步骤 {step_id} 尝试失败但已跳过 - 关键字 '{keyword}' 不存在")
-            return
-        
-        try:
-            print(f"\n🚀 ===> 尝试执行步骤: {step_id} - {keyword} - {description}")
-            key_func(**test_step)
-            print(format_status_message(StatusIcons.SUCCESS, StatusMessages.TRY_SUCCESS, step_id))
-            return
-        except Exception as e:
-            print(format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, step_id, str(e)))
-            # 尝试截图但不影响流程
-            try:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # 包含毫秒
-                error_path = os.path.join(screenshots_dir_session, f"try_error_{step_id}_{timestamp}.png")
-                keywords_session.active_page.screenshot(path=error_path, full_page=True)
-                print(f"📷  尝试失败截图已保存至: {error_path}")
-            except Exception as se:
-                print(f"📷  截图失败: {se}")
-            pytest.skip(f"步骤 {step_id} 尝试失败但已跳过")
-            return
-    
-    # 处理正常执行状态
-    if not keyword:
-        pytest.skip(f"步骤 {step_id} 关键字为空")
+        else:
+            pytest.skip(f"步骤 {step_id} 关键字为空")
 
     key_func = getattr(keywords_session, keyword, None)
     if not key_func:
-        pytest.fail(f"关键字 '{keyword}' 不存在")
+        if is_try_status(execution_status):
+            print(format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, step_id, f"关键字 '{keyword}' 不存在"))
+            pytest.skip(f"步骤 {step_id} 尝试失败但已跳过 - 关键字 '{keyword}' 不存在")
+        else:
+            pytest.fail(f"关键字 '{keyword}' 不存在")
     
+    # 设置截图目录以支持try状态失败截图
+    keywords_session.screenshots_dir = screenshots_dir_session
+    
+    # 执行关键字方法
+    # 注意：try状态的处理现在在_log_action装饰器中实现
     print(f"\n🚀 ===> 执行步骤: {step_id} - {keyword} - {description}")
-    key_func(**test_step) # 直接执行，如果失败，pytest会自动捕获并报告
-    print(format_status_message(StatusIcons.SUCCESS, StatusMessages.PASS, step_id))
+    
+    # 直接调用关键字方法，让_log_action装饰器处理try状态的异常
+    key_func(**test_step)
+    
+    # 如果执行到这里，说明步骤成功完成
+    if is_try_status(execution_status):
+        print(format_status_message(StatusIcons.SUCCESS, StatusMessages.TRY_SUCCESS, step_id))
+    else:
+        print(format_status_message(StatusIcons.SUCCESS, StatusMessages.PASS, step_id))
 
 if __name__ == '__main__':
     pytest.main(['-s', '-v', __file__])
