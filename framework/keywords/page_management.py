@@ -919,6 +919,8 @@ class PageManagementMixin:
         数据内容: 要打开的URL, [可选的超时秒数] e.g., "http://a.com,60"
         """
         data_content = str(kwargs.get('数据内容', ''))
+        # 支持中文逗号和英文逗号
+        data_content = data_content.replace('，', ',')
         parts = [p.strip() for p in data_content.split(',')]
         url = parts[0]
         timeout_ms = int(parts[1]) * 1000 if len(parts) > 1 else self.DEFAULT_TIMEOUT
