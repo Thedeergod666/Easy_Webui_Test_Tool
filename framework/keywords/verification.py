@@ -9,6 +9,8 @@ import time
 import pytest
 from playwright.sync_api import Error as PlaywrightTimeoutError, expect
 from .base import _log_action
+from .smart_fix_engine import SmartErrorHandler, RetryConfig
+from .error_analyzer import ErrorType
 
 
 class VerificationMixin:
@@ -30,6 +32,8 @@ class VerificationMixin:
         2. 表达式预解析 - 提取和验证页面变量引用
         3. 错误恢复机制 - 针对页面状态异常的智能处理
         4. 详细日志 - 提供完整的执行过程和错误信息
+        5. 严格模式智能修复 - 自动检测并修复严格模式违规
+        6. 自动重试机制 - 基于错误类型的智能重试策略
         """
         expression = kwargs.get('目标对象')
         description = kwargs.get('描述', '执行Codegen断言')
@@ -49,61 +53,58 @@ class VerificationMixin:
         # 3. 验证和准备页面状态
         self._prepare_pages_for_assertion(referenced_pages)
         
-        # 4. 执行断言并处理错误
-        max_retries = 3
-        for attempt in range(max_retries):
+        # 4. 使用智能修复机制执行断言
+        try:
+            smart_handler = SmartErrorHandler(RetryConfig(
+                max_attempts=3,
+                base_delay=0.5,
+                enable_page_recovery=True,
+                enable_locator_optimization=True,
+                debug_output=True
+            ))
+            
+            # 首次尝试直接执行
             try:
-                print(f"  [断言执行] 尝试次数: {attempt + 1}/{max_retries}")
-                
-                # 执行断言表达式
+                print(f"  [断言执行] 直接执行表达式")
                 eval(expression, safe_scope)
                 print(f"✓ [{description}] 断言通过")
-                return  # 成功后直接返回
-                
-            except NameError as e:
-                error_msg = str(e)
-                if "is not defined" in error_msg:
-                    missing_var = self._extract_missing_variable(error_msg)
-                    if missing_var and missing_var.startswith('page'):
-                        print(f"  [错误处理] 检测到缺失页面变量: {missing_var}")
-                        
-                        # 尝试恢复缺失的页面变量
-                        if self._recover_missing_page_variable(missing_var, safe_scope):
-                            print(f"  [错误恢复] 成功恢复页面变量: {missing_var}")
-                            continue  # 重试执行
-                        else:
-                            self._handle_unrecoverable_error(description, e, expression, safe_scope)
-                            return
-                    else:
-                        pytest.fail(f"✗ [{description}] 变量错误: {e}")
-                else:
-                    pytest.fail(f"✗ [{description}] 名称错误: {e}")
-                    
-            except (PlaywrightTimeoutError, AssertionError) as e:
-                # 页面状态或断言失败，尝试恢复
-                if attempt < max_retries - 1:
-                    print(f"  [错误处理] 断言失败，尝试恢复页面状态: {e}")
-                    if self._recover_pages_state(referenced_pages):
-                        print(f"  [错误恢复] 页面状态恢复成功，重试断言")
-                        time.sleep(1)  # 等待页面稳定
-                        continue
-                    else:
-                        print(f"  [错误恢复] 页面状态恢复失败")
-                
-                pytest.fail(f"✗ [{description}] 失败: {e}")
-                
-            except Exception as e:
-                # 其他未知错误
-                if attempt < max_retries - 1:
-                    print(f"  [错误处理] 未知错误，尝试恢复: {e}")
-                    time.sleep(0.5)
-                    continue
-                
-                self._handle_unrecoverable_error(description, e, expression, safe_scope)
                 return
-        
-        # 所有重试都失败
-        pytest.fail(f"✗ [{description}] 执行失败: 超过最大重试次数 ({max_retries})")
+            except Exception as e:
+                # 使用智能错误处理器进行修复和重试
+                print(f"  [智能修复] 检测到错误，启动智能修复机制")
+                result = smart_handler.handle_playwright_error(e, expression, safe_scope)
+                print(f"✓ [{description}] 通过智能修复成功")
+                return result
+                
+        except NameError as e:
+            # 变量错误的传统处理逻辑（向后兼容）
+            error_msg = str(e)
+            if "is not defined" in error_msg:
+                missing_var = self._extract_missing_variable(error_msg)
+                if missing_var and missing_var.startswith('page'):
+                    print(f"  [变量修复] 检测到缺失页面变量: {missing_var}")
+                    
+                    # 尝试恢复缺失的页面变量
+                    if self._recover_missing_page_variable(missing_var, safe_scope):
+                        print(f"  [变量修复] 成功恢复页面变量: {missing_var}")
+                        try:
+                            eval(expression, safe_scope)
+                            print(f"✓ [{description}] 变量修复后断言通过")
+                            return
+                        except Exception as retry_e:
+                            pytest.fail(f"✗ [{description}] 变量修复后仍失败: {retry_e}")
+                    else:
+                        self._handle_unrecoverable_error(description, e, expression, safe_scope)
+                        return
+                else:
+                    pytest.fail(f"✗ [{description}] 变量错误: {e}")
+            else:
+                pytest.fail(f"✗ [{description}] 名称错误: {e}")
+                
+        except Exception as e:
+            # 最终兜底处理
+            self._handle_unrecoverable_error(description, e, expression, safe_scope)
+            return
     
     def _extract_page_variables(self, expression: str) -> list:
         """
