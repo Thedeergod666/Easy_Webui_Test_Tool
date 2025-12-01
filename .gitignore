@@ -8,8 +8,9 @@
 CRUSH.md
 .crush
 .roomodes
-/.qoder/*
+.qoder/*
 CLAUDE.md
+.kiro/*
 
 # 忽略Python缓存文件
 __pycache__/
@@ -25,6 +26,7 @@ __pycache__/
 /reports/report*.html
 /reports/*report.html
 /reports/report*/
+/reports/*reports/
 *.log
 *.png
 
