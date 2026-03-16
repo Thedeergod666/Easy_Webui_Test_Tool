@@ -1,30 +1,24 @@
 # framework/utils/ui/view_test_cases.py
-import os
-import json
+from framework.utils.config_workflow import load_test_config
 
-def view_test_cases():
+def view_test_cases(non_interactive=False):
     """查看test_config.json中的测试用例"""
-    # 修正路径计算，确保指向项目根目录下的test_data文件夹
-    actual_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-    config_path = os.path.join(actual_project_root, 'test_data', 'test_config.json')
-    
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-    except FileNotFoundError:
-        print(f"[错误] 找不到配置文件: {config_path}")
-        input("按回车键继续...")
-        return
-    except json.JSONDecodeError:
-        print(f"[错误] 配置文件格式错误: {config_path}")
-        input("按回车键继续...")
-        return
+    result = load_test_config()
+    if result.errors:
+        for error in result.errors:
+            print(f"[错误] {error}")
+        if not non_interactive:
+            input("按回车键继续...")
+        return 1
+
+    config = result.data or {}
     
     test_flows = config.get('test_flows', [])
     if not test_flows:
         print("[信息] 配置文件中没有找到测试用例")
-        input("按回车键继续...")
-        return
+        if not non_interactive:
+            input("按回车键继续...")
+        return 0
     
     print("\n=== test_config.json 用例快速查看 ===")
     print(f"总共找到 {len(test_flows)} 个测试用例:")
@@ -56,9 +50,6 @@ def view_test_cases():
         print()
     
     print("=== 用例列表结束 ===")
-    # 在CICD模式下不等待用户输入
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "ci":
-        pass  # CICD模式下不等待用户输入
-    else:
+    if not non_interactive:
         input("按回车键继续...")
+    return 0

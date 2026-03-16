@@ -16,14 +16,16 @@ https://deepwiki.com/Thedeergod666/Easy_Webui_Test_Tool
 在使用之前，请确保你的电脑上已经安装了 Python 3.11或者更高版本（ 推荐 Python 3.13.1，我开发环境用的就是这个 ）和对应的 pip 版本，并将 Python 路径添加到系统环境变量中。
 #### 首次使用
 1. 双击运行 `install.bat` 文件，它会自动为你配置好所有环境。
-   macos/linux系统用户请在命令行里输入`chmod +x *.sh` 后再运行`intall.sh`文件。
+   macOS/Linux 系统用户请先在命令行里执行 `chmod +x *.sh`，然后运行 `install.sh`。
 2. 等待所有安装完成，看到成功提示后按任意键关闭窗口。
 #### 日常运行测试
 1. 修改 `test_data` 目录下的 Excel 文件来编写你的测试用例。
-2. 修改 `test_data` 目录下的 `test_config.json` 文件来启用或禁用你想测试的流程、切换有头无头模式，以及配置测试浏览器内核。
-3. 双击运行 `run_tests.bat` 文件。
-   macos/linux系统下双击运行`run_tests.sh`文件。
-4. 测试结束后，在 `reports` 文件夹里会生成一个 `report.html` 文件，用浏览器打开即可查看详细报告。
+2. 首次接手项目或配置损坏时，可运行 `main.bat init` / `main.sh init` 自动初始化或修复 `test_data/test_config.json`。
+3. 修改 `test_data` 目录下的 `test_config.json` 文件来启用或禁用你想测试的流程、切换有头无头模式，以及配置测试浏览器内核。
+4. 运行 `main.bat validate` / `main.sh validate`，先检查配置文件、Excel 路径和 Sheet 是否可用。
+5. 双击运行 `main.bat` 文件进入交互菜单。
+   macOS/Linux 系统下运行 `main.sh`。
+6. 测试结束后，报告会生成在 `reports/reports_YYYY-MM-DD/` 目录下，文件名格式类似 `report_2026-03-16_18-30-00_chromium_Passed.html`。
 #### 进阶参考
 * [🔧 关键字参考 (Keyword Reference)](./docs/自动化框架关键字使用指南.md)：所有可用关键字的详细说明、参数和使用示例。
 * [📍 定位器参考 (Locator Reference)](./docs/自动化框架定位器使用指南.md)：详解框架支持的各种元素定位策略及最佳实践。
@@ -79,10 +81,12 @@ https://deepwiki.com/Thedeergod666/Easy_Webui_Test_Tool
 	- 自动根据requirements.txt使用清华源镜像安装脚本所需虚拟环境
 	- 使用清华源镜像自动升级pip
 - main.bat / main.sh
-	- **交互式:** 直接双击`run_tests.bat`，会出现菜单
+	- **交互式:** 直接双击 `main.bat` / `main.sh`，会出现菜单
 	- **非交互式 (给CI/CD或自动化脚本用):**
-	    - `run_tests.bat 1` /  `run_tests.sh 1` (执行Function模式)
-	    - `run_tests.bat 2` / `run_tests.sh 2` (执行Session模式)
+	    - `main.bat 1` / `main.sh 1` (执行 Function 模式)
+	    - `main.bat 2 1` / `main.sh 2 1` (执行指定流程的 Session 模式)
+	    - `main.bat init` / `main.sh init` (初始化或修复 `test_config.json`)
+	    - `main.bat validate` / `main.sh validate` (校验配置和测试数据)
 	    - 非交互式报告后缀会带 `_CI` 字样
 	- 目前**支持的操作**：
     1. Function模式 (软断言，执行所有启用的流程)
@@ -103,4 +107,3 @@ https://deepwiki.com/Thedeergod666/Easy_Webui_Test_Tool
 	    - [ ] 音频bar点击
 	元素拖拽
 	关闭网页页面
-

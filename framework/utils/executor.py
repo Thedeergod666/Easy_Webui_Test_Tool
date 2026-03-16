@@ -16,9 +16,31 @@ if project_root not in sys.path:
 
 from framework.utils.run_tests.runner import run_tests, cleanup_temp_files
 from framework.utils.ui.view_test_cases import view_test_cases
+from framework.utils.config_workflow import (
+    initialize_test_config,
+    print_workflow_result,
+    validate_test_config,
+)
+
+
+COMMAND_ALIASES = {
+    "list": "9",
+    "cases": "9",
+    "cleanup": "10",
+    "clean": "10",
+    "init": "11",
+    "validate": "12",
+}
 
 class FunctionExecutor:
     """统一功能执行器"""
+
+    @staticmethod
+    def normalize_func_id(func_id):
+        """将文本别名归一化为菜单功能ID。"""
+        if func_id is None:
+            return None
+        return COMMAND_ALIASES.get(str(func_id).lower(), str(func_id).lower())
     
     @staticmethod
     def execute_function(func_id, args=None, ci_mode=False):
@@ -30,12 +52,13 @@ class FunctionExecutor:
             args: 功能参数
             ci_mode: 是否为CI/CD模式
         """
+        func_id = FunctionExecutor.normalize_func_id(func_id)
+
         if func_id in ["1", "2", "3", "4", "5", "6"]:
             # 测试执行模式
             if args:
-                run_tests(f"{func_id} {args}", ci_mode=ci_mode)
-            else:
-                run_tests(func_id, ci_mode=ci_mode)
+                return run_tests(f"{func_id} {args}", ci_mode=ci_mode)
+            return run_tests(func_id, ci_mode=ci_mode)
                 
         elif func_id == "7":
             # Codegen: 从现有Python文件转换
@@ -56,15 +79,20 @@ class FunctionExecutor:
                         # 更新配置文件
                         if update_test_config(output_excel_path, args.flow_name, final_sheet_name, args.browser, not args.disabled):
                             print(f"  > test_config.json 配置文件已更新")
+                            return 0
                         else:
                             print(f"  > test_config.json 配置文件更新失败")
+                            return 1
                     else:
                         print(f"--- 转换失败 ---")
+                        return 1
                 else:
                     print("[错误] Codegen命令缺少必要参数")
+                    return 1
             else:
                 from framework.utils.ui.codegen_ui import convert_from_file
                 convert_from_file()
+            return 0
                 
         elif func_id == "8":
             # Codegen: 启动Playwright录制并转换
@@ -85,31 +113,39 @@ class FunctionExecutor:
                         True  # 更新配置文件
                     ):
                         print(f"=== 所有操作已完成 ===")
+                        return 0
                     else:
                         print(f"[错误] 转换过程中出现错误")
+                        return 1
                 else:
                     print("[错误] Codegen录制命令缺少必要参数")
+                    return 1
             else:
                 from framework.utils.ui.codegen_ui import record_and_convert
                 record_and_convert()
+            return 0
                 
         elif func_id == "9":
             # test_config.json用例快速查看
-            # 在CICD模式下传递参数
-            if ci_mode:
-                import sys
-                sys.argv.append("ci")
-                view_test_cases()
-                sys.argv.pop()
-            else:
-                view_test_cases()
+            return view_test_cases(non_interactive=ci_mode)
             
         elif func_id == "10":
             # 清理残留临时文件
-            cleanup_temp_files(ci_mode=ci_mode)
+            return cleanup_temp_files(ci_mode=ci_mode)
+
+        elif func_id == "11":
+            result = initialize_test_config(project_root)
+            print_workflow_result(result)
+            return result.exit_code
+
+        elif func_id == "12":
+            result = validate_test_config(project_root)
+            print_workflow_result(result)
+            return result.exit_code
             
         else:
             print(f"未知功能ID: {func_id}")
+            return 1
 
     @staticmethod
     def parse_command_args(args):
@@ -125,7 +161,7 @@ class FunctionExecutor:
         if not args:
             return None, None
             
-        func_id = args[0]
+        func_id = FunctionExecutor.normalize_func_id(args[0])
         func_args = args[1:] if len(args) > 1 else []
         
         # 根据功能ID解析特定参数
@@ -159,6 +195,9 @@ class FunctionExecutor:
             parsed_args = parser.parse_args(func_args)
             return func_id, parsed_args
             
+        elif func_id in ["9", "10", "11", "12"]:
+            return func_id, None
+
         else:
             # 其他功能不需要特殊参数解析
             return func_id, None

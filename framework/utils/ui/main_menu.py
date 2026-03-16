@@ -97,13 +97,15 @@ def show_main_menu():
         print("  其他工具:")
         print("    9. test_config.json用例快速查看")
         print("    10. 清理残留临时文件")
+        print("    11. 初始化/修复 test_config.json")
+        print("    12. 校验 test_config.json")
         print()
         print("-" * 60)
         print("  q. 退出")
         print("-" * 60)
         print()
         
-        choice_input = input("请输入您的选择 [1-10, q]: ").strip().lower()
+        choice_input = input("请输入您的选择 [1-12, init, validate, q]: ").strip().lower()
         
         if not choice_input:
             print("无效输入，请重试...")
@@ -123,52 +125,26 @@ def show_main_menu():
             
         if choice in ["1", "2", "3", "4", "5", "6"]:
             # 测试执行模式
-            FunctionExecutor.execute_function(choice, index, ci_mode=False)
-                
-            # 执行完功能后询问是否返回主菜单
+            exit_code = FunctionExecutor.execute_function(choice, index, ci_mode=False)
             print("\n功能执行完成。")
+            if exit_code not in [0, None]:
+                print(f"退出码: {exit_code}")
             cont = input("是否返回主菜单？(y/回车继续，其他输入退出): ").strip().lower()
             if cont not in ["y", "Y", "yes", "是", ""]:  # 添加空字符串表示回车继续
                 print("退出脚本。")
                 break
-        elif choice == "7":
-            # Codegen: 从现有Python文件转换
-            FunctionExecutor.execute_function(choice, ci_mode=False)
-            
-            # 执行完功能后询问是否返回主菜单
+        elif choice in ["7", "8", "9", "10", "11", "12", "init", "validate"]:
+            if index is not None:
+                print("该功能不接受额外参数，请直接输入功能编号或命令。")
+                input("按回车键继续...")
+                continue
+
+            exit_code = FunctionExecutor.execute_function(choice, ci_mode=False)
             print("\n功能执行完成。")
+            if exit_code not in [0, None]:
+                print(f"退出码: {exit_code}")
             cont = input("是否返回主菜单？(y/回车继续，其他输入退出): ").strip().lower()
-            if cont not in ["y", "Y", "yes", "是", ""]:  # 添加空字符串表示回车继续
-                print("退出脚本。")
-                break
-        elif choice == "8":
-            # Codegen: 启动Playwright录制并转换
-            FunctionExecutor.execute_function(choice, ci_mode=False)
-            
-            # 执行完功能后询问是否返回主菜单
-            print("\n功能执行完成。")
-            cont = input("是否返回主菜单？(y/回车继续，其他输入退出): ").strip().lower()
-            if cont not in ["y", "Y", "yes", "是", ""]:  # 添加空字符串表示回车继续
-                print("退出脚本。")
-                break
-        elif choice == "9":
-            # test_config.json用例快速查看
-            FunctionExecutor.execute_function(choice, ci_mode=False)
-            
-            # 执行完功能后询问是否返回主菜单
-            print("\n功能执行完成。")
-            cont = input("是否返回主菜单？(y/回车继续，其他输入退出): ").strip().lower()
-            if cont not in ["y", "Y", "yes", "是", ""]:  # 添加空字符串表示回车继续
-                print("退出脚本。")
-                break
-        elif choice == "10":
-            # 清理残留临时文件
-            FunctionExecutor.execute_function(choice, ci_mode=False)
-            
-            # 执行完功能后询问是否返回主菜单
-            print("\n功能执行完成。")
-            cont = input("是否返回主菜单？(y/回车继续，其他输入退出): ").strip().lower()
-            if cont not in ["y", "Y", "yes", "是", ""]:  # 添加空字符串表示回车继续
+            if cont not in ["y", "Y", "yes", "是", ""]:
                 print("退出脚本。")
                 break
         elif choice in ["q", "quit"]:

@@ -93,10 +93,11 @@ def run_pytest_batch(browser, flows_for_browser, test_file_path, ci_mode=False):
     print(f"执行命令: {' '.join(command)}")
     
     # 4. 执行命令
-    result = subprocess.run(command)
-    
-    # 5. 清理临时文件
-    os.remove(temp_config_path)
+    try:
+        result = subprocess.run(command)
+    finally:
+        if os.path.exists(temp_config_path):
+            os.remove(temp_config_path)
     
     # 6. 重命名报告文件，添加成功/失败状态
     if result.returncode != 0:
@@ -154,57 +155,59 @@ def run_tests(choice_input, ci_mode=False):
     test_flows = get_test_flows()
     if not test_flows:
         print("未找到任何启用的测试流程。")
-        return
+        return 1
+
+    batch_results = []
     
     if choice == "1":  # Function模式
         grouped_flows = group_flows_by_browser(test_flows)
         test_file_py = os.path.join(project_root, 'tests', 'test_flows', 'test_flow_by_function_json.py')
         for browser, flows in grouped_flows.items():
-            run_pytest_batch(browser, flows, test_file_py, ci_mode=ci_mode)
+            batch_results.append(run_pytest_batch(browser, flows, test_file_py, ci_mode=ci_mode))
     
     elif choice == "2":  # Session模式
         # Session模式只跑指定索引的流程的第一个浏览器
         selected_flow = get_flow_by_index(test_flows, flow_index)
         if selected_flow is None:
             print("未找到指定的测试流程。")
-            return
+            return 1
             
         browser = BROWSER_ALIASES.get(selected_flow.get("browser", "cr").lower(), "chromium")
         test_file_py = os.path.join(project_root, 'tests', 'test_flows', 'test_steps_by_session_json.py')
-        run_pytest_batch(browser, [selected_flow], test_file_py, ci_mode=ci_mode)
+        batch_results.append(run_pytest_batch(browser, [selected_flow], test_file_py, ci_mode=ci_mode))
         
     elif choice == "3":  # Session模式-Browsers
         # Session模式在所有支持的浏览器上执行指定索引的流程
         selected_flow = get_flow_by_index(test_flows, flow_index)
         if selected_flow is None:
             print("未找到指定的测试流程。")
-            return
+            return 1
             
         # 获取所有支持的浏览器
         supported_browsers = ["chromium", "firefox", "webkit"]
         test_file_py = os.path.join(project_root, 'tests', 'test_flows', 'test_steps_by_session_json.py')
         for browser in supported_browsers:
-            run_pytest_batch(browser, [selected_flow], test_file_py, ci_mode=ci_mode)
+            batch_results.append(run_pytest_batch(browser, [selected_flow], test_file_py, ci_mode=ci_mode))
     
     elif choice == "4":  # Session模式-All
         # Session模式执行所有启用的流程
         grouped_flows = group_flows_by_browser(test_flows)
         test_file_py = os.path.join(project_root, 'tests', 'test_flows', 'test_steps_by_session_json.py')
         for browser, flows in grouped_flows.items():
-            run_pytest_batch(browser, flows, test_file_py, ci_mode=ci_mode)
+            batch_results.append(run_pytest_batch(browser, flows, test_file_py, ci_mode=ci_mode))
             
     elif choice == "5":  # Function模式-Sheets
         # Function模式-Sheets执行指定Excel文件中的所有sheet
         selected_flow = get_flow_by_index(test_flows, flow_index)
         if selected_flow is None:
             print("未找到指定的测试流程。")
-            return
+            return 1
             
         # 获取Excel文件路径
         excel_file_path = selected_flow.get("file_path")
         if not excel_file_path:
             print("指定的测试流程中没有配置Excel文件路径。")
-            return
+            return 1
             
         # 处理相对路径
         if not os.path.isabs(excel_file_path):
@@ -213,7 +216,7 @@ def run_tests(choice_input, ci_mode=False):
         # 检查文件是否存在
         if not os.path.exists(excel_file_path):
             print(f"Excel文件不存在: {excel_file_path}")
-            return
+            return 1
             
         # 获取Excel文件中的所有sheet名称
         import pandas as pd
@@ -222,7 +225,7 @@ def run_tests(choice_input, ci_mode=False):
             sheet_names = excel_file.sheet_names
         except Exception as e:
             print(f"读取Excel文件失败: {e}")
-            return
+            return 1
             
         # 为每个sheet创建测试流程配置
         sheet_flows = []
@@ -236,20 +239,20 @@ def run_tests(choice_input, ci_mode=False):
         grouped_flows = group_flows_by_browser(sheet_flows)
         test_file_py = os.path.join(project_root, 'tests', 'test_flows', 'test_flow_by_function_json.py')
         for browser, flows in grouped_flows.items():
-            run_pytest_batch(browser, flows, test_file_py, ci_mode=ci_mode)
+            batch_results.append(run_pytest_batch(browser, flows, test_file_py, ci_mode=ci_mode))
             
     elif choice == "6":  # Session模式-Sheets
         # Session模式-Sheets执行指定Excel文件中的所有sheet
         selected_flow = get_flow_by_index(test_flows, flow_index)
         if selected_flow is None:
             print("未找到指定的测试流程。")
-            return
+            return 1
             
         # 获取Excel文件路径
         excel_file_path = selected_flow.get("file_path")
         if not excel_file_path:
             print("指定的测试流程中没有配置Excel文件路径。")
-            return
+            return 1
             
         # 处理相对路径
         if not os.path.isabs(excel_file_path):
@@ -258,7 +261,7 @@ def run_tests(choice_input, ci_mode=False):
         # 检查文件是否存在
         if not os.path.exists(excel_file_path):
             print(f"Excel文件不存在: {excel_file_path}")
-            return
+            return 1
             
         # 获取Excel文件中的所有sheet名称
         import pandas as pd
@@ -267,7 +270,7 @@ def run_tests(choice_input, ci_mode=False):
             sheet_names = excel_file.sheet_names
         except Exception as e:
             print(f"读取Excel文件失败: {e}")
-            return
+            return 1
             
         # 为每个sheet创建测试流程配置
         sheet_flows = []
@@ -281,7 +284,12 @@ def run_tests(choice_input, ci_mode=False):
         grouped_flows = group_flows_by_browser(sheet_flows)
         test_file_py = os.path.join(project_root, 'tests', 'test_flows', 'test_steps_by_session_json.py')
         for browser, flows in grouped_flows.items():
-            run_pytest_batch(browser, flows, test_file_py, ci_mode=ci_mode)
+            batch_results.append(run_pytest_batch(browser, flows, test_file_py, ci_mode=ci_mode))
+    else:
+        print(f"未知功能选项: {choice}")
+        return 1
+
+    return 0 if batch_results and all(batch_results) else 1
 
 def cleanup_temp_files(ci_mode=False):
     """清理残留的临时文件"""
@@ -293,7 +301,7 @@ def cleanup_temp_files(ci_mode=False):
     
     if not temp_files:
         print("未找到残留的临时文件。")
-        return
+        return 0
     
     print(f"找到 {len(temp_files)} 个残留的临时文件:")
     for temp_file in temp_files:
@@ -308,6 +316,7 @@ def cleanup_temp_files(ci_mode=False):
         confirm = input("\n是否确认删除这些临时文件？(y/N): ").strip().lower()
     
     if confirm in ["y", "yes", "是"]:
+        had_errors = False
         for temp_file in temp_files:
             temp_file_path = os.path.join(test_data_dir, temp_file)
             try:
@@ -315,6 +324,9 @@ def cleanup_temp_files(ci_mode=False):
                 print(f"已删除: {temp_file}")
             except Exception as e:
                 print(f"删除 {temp_file} 失败: {e}")
+                had_errors = True
         print("临时文件清理完成。")
+        return 1 if had_errors else 0
     else:
         print("取消清理操作。")
+        return 0
