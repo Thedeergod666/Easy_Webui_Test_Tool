@@ -7,15 +7,15 @@ Try状态错误处理集成测试
 import pytest
 import os
 import tempfile
-import pandas as pd
 from unittest.mock import Mock
 import sys
+from _pytest.outcomes import Skipped
 
 # 添加项目路径到sys.path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from framework.Keywords import Keywords
-from tests.test_flows.test_steps_by_session_json import test_single_step
+from tests.helpers.step_flow_runner import execute_test_step
 from playwright.sync_api import Locator
 
 
@@ -114,10 +114,9 @@ class TestTryStatusIntegration:
         
         # 执行测试步骤，应该成功完成而不抛出异常
         try:
-            test_single_step(keywords, test_step, self.screenshots_dir)
+            execute_test_step(keywords, test_step, self.screenshots_dir)
             success = True
-        except SystemExit:
-            # pytest.skip()会引发SystemExit，这是正常的
+        except Skipped:
             success = True
         except Exception as e:
             success = False
@@ -140,8 +139,8 @@ class TestTryStatusIntegration:
         }
         
         # 执行测试步骤，应该通过pytest.skip跳过
-        with pytest.raises(SystemExit):  # pytest.skip会引发SystemExit
-            test_single_step(keywords, test_step, self.screenshots_dir)
+        with pytest.raises(Skipped):
+            execute_test_step(keywords, test_step, self.screenshots_dir)
         
         # 验证截图被生成
         screenshot_files = [f for f in os.listdir(self.screenshots_dir) if f.startswith('try_error_case_002_')]
@@ -163,7 +162,7 @@ class TestTryStatusIntegration:
         
         # 执行测试步骤，应该成功完成
         try:
-            test_single_step(keywords, test_step, self.screenshots_dir)
+            execute_test_step(keywords, test_step, self.screenshots_dir)
             success = True
         except Exception as e:
             success = False
@@ -186,8 +185,8 @@ class TestTryStatusIntegration:
         }
         
         # 执行测试步骤，应该通过pytest.skip跳过
-        with pytest.raises(SystemExit):  # pytest.skip会引发SystemExit
-            test_single_step(keywords, test_step, self.screenshots_dir)
+        with pytest.raises(Skipped):
+            execute_test_step(keywords, test_step, self.screenshots_dir)
 
 
 if __name__ == '__main__':

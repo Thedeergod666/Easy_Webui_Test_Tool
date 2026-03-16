@@ -6,7 +6,6 @@
 
 import re
 import ast
-import pytest
 from playwright.sync_api import Page, Locator
 
 
@@ -16,6 +15,54 @@ class ElementLocatorMixin:
     提供页面元素定位和查找相关的方法实现。
     """
     
+    def _evaluate_safe_ast_value(self, node, scope=None):
+        """在受限作用域内求值参数 AST，只允许字面量和白名单调用。"""
+        scope = scope or {}
+
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            if node.id in scope:
+                return scope[node.id]
+            raise NameError(f"在安全作用域中找不到名字: '{node.id}'")
+        if isinstance(node, ast.Tuple):
+            return tuple(self._evaluate_safe_ast_value(item, scope) for item in node.elts)
+        if isinstance(node, ast.List):
+            return [self._evaluate_safe_ast_value(item, scope) for item in node.elts]
+        if isinstance(node, ast.Dict):
+            return {
+                self._evaluate_safe_ast_value(key, scope): self._evaluate_safe_ast_value(value, scope)
+                for key, value in zip(node.keys, node.values)
+            }
+        if isinstance(node, ast.UnaryOp):
+            operand = self._evaluate_safe_ast_value(node.operand, scope)
+            if isinstance(node.op, ast.USub):
+                return -operand
+            if isinstance(node.op, ast.UAdd):
+                return +operand
+            if isinstance(node.op, ast.Not):
+                return not operand
+            raise TypeError(f"不支持的一元运算: {type(node.op)}")
+        if isinstance(node, ast.Attribute):
+            parent_object = self._evaluate_safe_ast_value(node.value, scope)
+            if parent_object is re:
+                if hasattr(re, node.attr):
+                    return getattr(re, node.attr)
+                raise AttributeError(f"re 模块不存在属性: {node.attr}")
+            raise TypeError(f"不支持的参数属性访问: {ast.unparse(node)}")
+        if isinstance(node, ast.Call):
+            callable_object = self._evaluate_safe_ast_value(node.func, scope)
+            args = [self._evaluate_safe_ast_value(arg, scope) for arg in node.args]
+            kwargs = {
+                kw.arg: self._evaluate_safe_ast_value(kw.value, scope)
+                for kw in node.keywords
+            }
+            if callable_object is re.compile:
+                return callable_object(*args, **kwargs)
+            raise TypeError(f"不支持的参数调用: {ast.unparse(node)}")
+
+        raise TypeError(f"不支持的参数节点类型: {type(node)}")
+
     def _execute_codegen_node(self, node, scope):
         """
         [内部] 递归地执行AST（抽象语法树）节点。
@@ -23,9 +70,11 @@ class ElementLocatorMixin:
         """
         if isinstance(node, ast.Call):
             callable_method = self._execute_codegen_node(node.func, scope)
-            allowed_globals = {"re": re}
-            args = [eval(ast.unparse(arg), allowed_globals) for arg in node.args]
-            kwargs = {kw.arg: eval(ast.unparse(kw.value), allowed_globals) for kw in node.keywords}
+            args = [self._evaluate_safe_ast_value(arg, {"re": re}) for arg in node.args]
+            kwargs = {
+                kw.arg: self._evaluate_safe_ast_value(kw.value, {"re": re})
+                for kw in node.keywords
+            }
             return callable_method(*args, **kwargs)
         elif isinstance(node, ast.Attribute):
             parent_object = self._execute_codegen_node(node.value, scope)
@@ -71,22 +120,19 @@ class ElementLocatorMixin:
         if not code_str or not isinstance(code_str, str):
             return code_str
             
-        # 使用正则表达式检测错误的页面前缀模式
-        error_prefix_pattern = r'^page\d+\.'
-        
-        if re.match(error_prefix_pattern, code_str):
-            # 检测到错误前缀，移除它
-            original_code = code_str
-            processed_code = re.sub(error_prefix_pattern, '', code_str)
-            print(f"    [Codegen智能修复] 检测到错误前缀，已自动修复:")
-            print(f"    [Codegen智能修复] 原始: {original_code}")
-            print(f"    [Codegen智能修复] 修复后: {processed_code}")
-            return processed_code
+        invalid_prefix_match = re.match(r'^(page\d+)\.', code_str)
+        if invalid_prefix_match:
+            page_name = invalid_prefix_match.group(1)
+            error_message = (
+                f"无效页面引用: {page_name}。默认严格模式不会自动改写为当前页，请修正数据源中的页面变量。"
+            )
+            print(f"    [Codegen] {error_message}")
+            raise ValueError(error_message)
         
         # 检查是否已经以page.开头，如果是则移除，避免重复前缀
         if code_str.startswith('page.'):
             processed_code = code_str[5:]  # 移除'page.'前缀
-            print(f"    [Codegen智能修复] 移除重复前缀: page.{code_str} -> {processed_code}")
+            print(f"    [Codegen] 移除重复前缀: {code_str} -> {processed_code}")
             return processed_code
             
         # 正常情况，返回原始字符串
@@ -137,16 +183,34 @@ class ElementLocatorMixin:
                 if not combined_args_str.endswith(','):
                     combined_args_str += ','
                 combined_args_str += data_content
-            modifier_match = re.search(r'(\.(first|last|nth\(\d+\)))$', combined_args_str)
-            core_args_str, modifier_str = (combined_args_str[:-len(modifier_match.group(1))].strip(), modifier_match.group(1)) if modifier_match else (combined_args_str, "")
+            modifier_match = re.search(r'(\.(?:first|last|nth\(\d+\)|filter\([^)]+\)))$', combined_args_str)
+            core_args_str, modifier_str = (
+                combined_args_str[:-len(modifier_match.group(1))].strip(),
+                modifier_match.group(1),
+            ) if modifier_match else (combined_args_str, "")
             try:
                 tree = ast.parse(f"f({core_args_str})")
                 call_node = tree.body[0].value
-                allowed_globals = {"re": re}
-                args = [arg.id if isinstance(arg, ast.Name) else eval(ast.unparse(arg), allowed_globals) for arg in call_node.args]
-                kwargs_dict = {kw.arg: eval(ast.unparse(kw.value), allowed_globals) for kw in call_node.keywords}
+                args = [
+                    self._evaluate_safe_ast_value(arg, {"re": re})
+                    for arg in call_node.args
+                ]
+                kwargs_dict = {
+                    kw.arg: self._evaluate_safe_ast_value(kw.value, {"re": re})
+                    for kw in call_node.keywords
+                }
                 base_locator = target_page.get_by_role(*args, **kwargs_dict)
-                return eval(f"base_locator{modifier_str}", {"base_locator": base_locator}) if modifier_str else base_locator
+                if not modifier_str:
+                    return base_locator
+
+                modifier_tree = ast.parse(f"base_locator{modifier_str}", mode='eval')
+                result = self._execute_codegen_node(
+                    modifier_tree.body,
+                    {"base_locator": base_locator},
+                )
+                if not isinstance(result, Locator):
+                    raise TypeError("get_by_role 修饰链最终未返回 Locator")
+                return result
             except Exception as e:
                 raise ValueError(f"解析 get_by_role 参数 '{combined_args_str}' 失败: {e}")
         if locator_type == 'chain':

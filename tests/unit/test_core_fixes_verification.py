@@ -18,15 +18,15 @@ def test_codegen_prefix_processing():
     """验证Codegen前缀处理功能"""
     locator_mixin = ElementLocatorMixin()
     
-    # 测试错误前缀处理
-    result = locator_mixin._process_codegen_prefix("page13.get_by_role('button', name='×')")
-    assert result == "get_by_role('button', name='×')"
+    # 测试错误前缀不会被静默修复
+    with pytest.raises(ValueError, match="无效页面引用"):
+        locator_mixin._process_codegen_prefix("page13.get_by_role('button', name='×')")
     
     # 测试正常代码不被影响
     result = locator_mixin._process_codegen_prefix("locator('#test')")
     assert result == "locator('#test')"
     
-    print("✅ Codegen前缀处理功能正常")
+    print("[PASS] Codegen前缀处理功能正常")
 
 
 def test_try_status_detection():
@@ -54,18 +54,18 @@ def test_status_format():
     )
     
     result = format_status_message(StatusIcons.SUCCESS, StatusMessages.TRY_SUCCESS, "test_001")
-    expected = "✔️ 结果: [尝试成功] - 步骤 test_001"
+    expected = "[PASS] 结果: [尝试成功] - 步骤 test_001"
     assert result == expected
     
     result = format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP, "test_002", "测试错误")
-    expected = "⚠️ 结果: [尝试失败-已跳过] - 步骤 test_002 - 测试错误"
+    expected = "[WARN] 结果: [尝试失败-已跳过] - 步骤 test_002 - 测试错误"
     assert result == expected
     
-    print("✅ 状态格式化功能正常")
+    print("[PASS] 状态格式化功能正常")
 
 
 if __name__ == '__main__':
     test_codegen_prefix_processing()
     test_try_status_detection()
     test_status_format()
-    print("\n🎉 所有核心功能验证通过！")
+    print("\n[PASS] 所有核心功能验证通过！")

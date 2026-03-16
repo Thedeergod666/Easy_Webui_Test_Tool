@@ -111,10 +111,12 @@ def test_strict_mode_auto_fix_integration():
             ))
             
             # 首先验证确实会触发严格模式错误
+            captured_error = None
             try:
                 eval(problematic_expression, execution_context)
                 pytest.fail("期望触发严格模式错误，但表达式成功执行了")
             except Exception as e:
+                captured_error = e
                 error_message = str(e)
                 print(f"✓ 成功触发预期错误: {type(e).__name__}")
                 print(f"   错误信息: {error_message}")
@@ -127,7 +129,7 @@ def test_strict_mode_auto_fix_integration():
             start_time = time.time()
             
             try:
-                result = handler.handle_playwright_error(e, problematic_expression, execution_context)
+                result = handler.handle_playwright_error(captured_error, problematic_expression, execution_context)
                 end_time = time.time()
                 print(f"✓ 智能修复成功！耗时: {end_time - start_time:.2f}秒")
                 

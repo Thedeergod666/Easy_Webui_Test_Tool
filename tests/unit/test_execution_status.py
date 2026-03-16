@@ -30,10 +30,10 @@ class TestExecutionStatus(unittest.TestCase):
     
     def test_status_icons(self):
         """测试状态图标定义"""
-        self.assertEqual(StatusIcons.SUCCESS, "✔️")
-        self.assertEqual(StatusIcons.FAILURE, "❌")
-        self.assertEqual(StatusIcons.WARNING, "⚠️")
-        self.assertEqual(StatusIcons.END, "🔚")
+        self.assertEqual(StatusIcons.SUCCESS, "[PASS]")
+        self.assertEqual(StatusIcons.FAILURE, "[FAIL]")
+        self.assertEqual(StatusIcons.WARNING, "[WARN]")
+        self.assertEqual(StatusIcons.END, "[END]")
     
     def test_status_messages(self):
         """测试状态消息定义"""
@@ -48,15 +48,15 @@ class TestExecutionStatus(unittest.TestCase):
         """测试状态消息格式化"""
         # 基本消息格式化
         msg = format_status_message(StatusIcons.SUCCESS, StatusMessages.PASS)
-        self.assertEqual(msg, "✔️ 结果: [通过]")
+        self.assertEqual(msg, "[PASS] 结果: [通过]")
         
         # 带步骤ID的消息格式化
         msg = format_status_message(StatusIcons.SUCCESS, StatusMessages.PASS, step_id="001")
-        self.assertEqual(msg, "✔️ 结果: [通过] - 步骤 001")
+        self.assertEqual(msg, "[PASS] 结果: [通过] - 步骤 001")
         
         # 带错误信息的消息格式化
         msg = format_status_message(StatusIcons.FAILURE, StatusMessages.FAIL, error="测试错误")
-        self.assertEqual(msg, "❌ 结果: [失败] - 测试错误")
+        self.assertEqual(msg, "[FAIL] 结果: [失败] - 测试错误")
         
         # 完整格式化
         msg = format_status_message(
@@ -65,7 +65,7 @@ class TestExecutionStatus(unittest.TestCase):
             step_id="002", 
             error="元素未找到"
         )
-        self.assertEqual(msg, "⚠️ 结果: [尝试失败-已跳过] - 步骤 002 - 元素未找到")
+        self.assertEqual(msg, "[WARN] 结果: [尝试失败-已跳过] - 步骤 002 - 元素未找到")
     
     def test_is_try_status(self):
         """测试try状态检测"""
@@ -171,10 +171,10 @@ class TestExecutionStatusIntegration(unittest.TestCase):
         self.assertEqual(results[3][0], "END")
         
         # 验证消息格式
-        self.assertIn("✔️ 结果: [通过] - 步骤 001", results[0][1])
-        self.assertIn("✔️ 结果: [尝试成功] - 步骤 002", results[1][1])
-        self.assertIn("✔️ 结果: [跳过] - 步骤 003", results[2][1])
-        self.assertIn("🔚 结果: [结束] - 步骤 004", results[3][1])
+        self.assertIn("[PASS] 结果: [通过] - 步骤 001", results[0][1])
+        self.assertIn("[PASS] 结果: [尝试成功] - 步骤 002", results[1][1])
+        self.assertIn("[PASS] 结果: [跳过] - 步骤 003", results[2][1])
+        self.assertIn("[END] 结果: [结束] - 步骤 004", results[3][1])
 
 if __name__ == '__main__':
     unittest.main()

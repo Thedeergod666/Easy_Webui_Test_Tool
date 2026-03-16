@@ -3,6 +3,8 @@ import pytest
 import sys
 import os
 import json
+import base64
+import glob
 from datetime import datetime
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -14,6 +16,7 @@ from framework import Keywords as KeywordsModule
 from framework.Keywords import Keywords
 # 导入ReportLogger用于测试步骤记录
 from framework.utils.report_logger import ReportLogger
+from framework.utils.reporting_support import append_pytest_html_extra, get_report_logger
 
 def pytest_addoption(parser):
     """添加自定义命令行选项"""
@@ -128,6 +131,109 @@ def pytest_sessionfinish(session, exitstatus):
         reporter.write_line(f"在有头模式下, 所有测试中 'sleep' 关键字的总耗时为: {total_sleep:.2f} 秒")
 
 
+def _append_html_report_extra(report, extra):
+    """统一向 pytest-html 报告追加附件。"""
+    return append_pytest_html_extra(report, extra)
+
+
+def _get_keywords_fixture(funcargs):
+    return funcargs.get("keywords_func") or funcargs.get("keywords_session")
+
+
+def _get_screenshots_dir(funcargs):
+    return funcargs.get("screenshots_dir") or funcargs.get("screenshots_dir_session")
+
+
+def _build_try_screenshot_html(step_id, timestamp, path):
+    return f"""
+    <div style="margin: 10px 0; padding: 10px; border-left: 4px solid #ff9800; background-color: #fff3cd;">
+        <h4 style="color: #856404; margin-top: 0;">Try状态失败截图</h4>
+        <p><strong>步骤ID:</strong> {step_id}</p>
+        <p><strong>失败时间:</strong> {timestamp}</p>
+        <p><strong>截图文件:</strong> <code>{os.path.basename(path)}</code></p>
+        <p><strong>状态:</strong> <span style="color: #ff9800;">尝试失败但已跳过</span></p>
+    </div>
+    """
+
+
+def _build_failure_screenshot_html(screenshot_path):
+    screenshot_name = os.path.basename(screenshot_path)
+    relative_path = f"screenshots/{screenshot_name}"
+    screenshot_time = datetime.fromtimestamp(os.path.getmtime(screenshot_path)).strftime('%Y-%m-%d %H:%M:%S')
+    return f"""
+    <div style="margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background-color: #f8f9fa;">
+        <h4 style="color: #d9534f; margin-top: 0;">失败截图信息</h4>
+        <p><strong>截图文件:</strong> <code>{relative_path}</code></p>
+        <p><strong>截图时间:</strong> {screenshot_time}</p>
+    </div>
+    """
+
+
+def _append_png_extra(report, image_path, name):
+    import pytest_html
+
+    with open(image_path, "rb") as image_file:
+        image_data = base64.b64encode(image_file.read()).decode()
+
+    _append_html_report_extra(report, pytest_html.extras.png(image_data, name=name))
+
+
+def _append_html_extra(report, html_content):
+    import pytest_html
+
+    _append_html_report_extra(report, pytest_html.extras.html(html_content))
+
+
+def _consume_try_failure_screenshots(keywords):
+    screenshots = list(getattr(keywords, "_try_failure_screenshots", []))
+    if hasattr(keywords, "_try_failure_screenshots"):
+        keywords._try_failure_screenshots = []
+    return screenshots
+
+
+def _attach_try_failure_screenshots(report, keywords):
+    for try_screenshot in _consume_try_failure_screenshots(keywords):
+        try_path = try_screenshot["path"]
+        if not os.path.exists(try_path):
+            continue
+
+        step_id = try_screenshot["step_id"]
+        timestamp = try_screenshot["timestamp"]
+        print(f"[REPORT] 处理Try失败截图: {try_path}")
+        _append_png_extra(report, try_path, f"Try失败截图 - 步骤 {step_id}")
+        _append_html_extra(report, _build_try_screenshot_html(step_id, timestamp, try_path))
+
+
+def _resolve_failure_screenshot_path(funcargs):
+    keywords = _get_keywords_fixture(funcargs)
+    screenshots_dir = _get_screenshots_dir(funcargs)
+    if not keywords or not screenshots_dir:
+        return None
+
+    test_step = funcargs.get("test_step", {})
+    step_id = test_step.get("编号", "unknown_step")
+
+    try:
+        if hasattr(keywords, "active_page") and keywords.active_page:
+            os.makedirs(screenshots_dir, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+            screenshot_path = os.path.join(screenshots_dir, f"error_{step_id}_{timestamp}.png")
+            keywords.active_page.screenshot(path=screenshot_path, full_page=True)
+            print(f"[REPORT] 失败截图已生成: {screenshot_path}")
+            return screenshot_path
+    except Exception as error:
+        print(f"[REPORT] 生成失败截图失败: {error}")
+
+    error_screenshots = glob.glob(os.path.join(screenshots_dir, f"error_{step_id}_*.png"))
+    if not error_screenshots:
+        error_screenshots = glob.glob(os.path.join(screenshots_dir, "error_*.png"))
+    if not error_screenshots:
+        return None
+
+    error_screenshots.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+    return error_screenshots[0]
+
+
 # --- Hook 5: 在测试用例执行后，生成详细的HTML报告 ---
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
 def pytest_runtest_makereport(item, call):
@@ -141,159 +247,28 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     
     # 只在call阶段完成后处理报告生成
-    if report.when == "call":
-        try:
-            # 处理失败截图的HTML集成
-            if report.failed and hasattr(item, "funcargs"):
-                # 获取截图路径
-                screenshot_path = None
-                
-                # Session模式下的截图处理
-                if "keywords_session" in item.funcargs and "screenshots_dir_session" in item.funcargs:
-                    keywords_session = item.funcargs["keywords_session"]
-                    screenshots_dir_session = item.funcargs["screenshots_dir_session"]
-                    test_step = item.funcargs.get("test_step", {})
-                    step_id = test_step.get('编号', 'unknown_step')
-                    
-                    # 检查是否有try状态失败的截图
-                    try_screenshots = []
-                    if hasattr(keywords_session, '_try_failure_screenshots'):
-                        try_screenshots = keywords_session._try_failure_screenshots
-                    
-                    # 先处理try状态失败的截图
-                    for try_screenshot in try_screenshots:
-                        try_path = try_screenshot['path']
-                        try_step_id = try_screenshot['step_id']
-                        try_timestamp = try_screenshot['timestamp']
-                        
-                        if os.path.exists(try_path):
-                            print(f"📷  处理Try失败截图: {try_path}")
-                            
-                            # 将try失败截图添加到报告
-                            try:
-                                import pytest_html
-                                import base64
-                                
-                                extras = getattr(report, "extras", [])
-                                
-                                with open(try_path, "rb") as image_file:
-                                    image_data = base64.b64encode(image_file.read()).decode()
-                                
-                                extras.append(pytest_html.extras.png(image_data, name=f"Try失败截图 - 步骤 {try_step_id}"))
-                                
-                                # 添加try失败的HTML信息
-                                try_html = f'''
-                                <div style="margin: 10px 0; padding: 10px; border-left: 4px solid #ff9800; background-color: #fff3cd;">
-                                    <h4 style="color: #856404; margin-top: 0;">⚠️ Try状态失败截图</h4>
-                                    <p><strong>步骤ID:</strong> {try_step_id}</p>
-                                    <p><strong>失败时间:</strong> {try_timestamp}</p>
-                                    <p><strong>截图文件:</strong> <code>{os.path.basename(try_path)}</code></p>
-                                    <p><strong>状态:</strong> <span style="color: #ff9800;">尝试失败但已跳过</span></p>
-                                </div>
-                                '''
-                                
-                                extras.append(pytest_html.extras.html(try_html))
-                                report.extras = extras
-                                
-                                print(f"📷  ✅ Try失败截图已集成到HTML报告: {try_step_id}")
-                                
-                            except Exception as e:
-                                print(f"📷  ❌ 集成Try失败截图时出错: {e}")
-                    
-                    # 然后处理普通的失败截图
-                    # 先尝试生成失败截图
-                    try:
-                        if hasattr(keywords_session, 'active_page') and keywords_session.active_page:
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-                            screenshot_filename = f"error_{step_id}_{timestamp}.png"
-                            screenshot_path = os.path.join(screenshots_dir_session, screenshot_filename)
-                            
-                            # 确保目录存在
-                            os.makedirs(screenshots_dir_session, exist_ok=True)
-                            
-                            # 生成截图
-                            keywords_session.active_page.screenshot(path=screenshot_path, full_page=True)
-                            print(f"📷  Session模式失败截图已生成: {screenshot_path}")
-                    except Exception as e:
-                        print(f"📷  Session模式生成失败截图失败: {e}")
-                        # 如果生成失败，尝试查找已存在的截图文件
-                        import glob
-                        error_screenshots = glob.glob(os.path.join(screenshots_dir_session, f"error_{step_id}_*.png"))
-                        if error_screenshots:
-                            error_screenshots.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                            screenshot_path = error_screenshots[0]
-                            print(f"📷  Session模式找到已存在的错误截图: {screenshot_path}")
-                
-                # Function模式下的截图处理
-                elif "screenshots_dir" in item.funcargs:
-                    screenshots_dir = item.funcargs["screenshots_dir"]
-                    # 查找最新的错误截图文件
-                    import glob
-                    error_screenshots = glob.glob(os.path.join(screenshots_dir, "error_*.png"))
-                    if error_screenshots:
-                        # 按修改时间排序，获取最新的截图
-                        error_screenshots.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                        screenshot_path = error_screenshots[0]
-                        print(f"📷  Function模式找到错误截图: {screenshot_path}")
-                
-                # 将截图添加到pytest-html报告
-                if screenshot_path and os.path.exists(screenshot_path):
-                    print(f"📷  开始集成截图到HTML报告，截图路径: {screenshot_path}")
-                    
-                    # 使用pytest_html的正确API添加截图
-                    try:
-                        import pytest_html
-                        
-                        # 方法1：使用pytest_html.extras.image()直接添加截图文件
-                        extras = getattr(report, "extras", [])
-                        
-                        # 读取截图文件并转换为base64
-                        import base64
-                        with open(screenshot_path, "rb") as image_file:
-                            image_data = base64.b64encode(image_file.read()).decode()
-                        
-                        # 使用pytest_html.extras.png()添加截图
-                        extras.append(pytest_html.extras.png(image_data, name="失败截图"))
-                        
-                        # 添加额外的HTML信息
-                        screenshot_name = os.path.basename(screenshot_path)
-                        relative_path = f"screenshots/{screenshot_name}"
-                        
-                        extra_html = f'''
-                        <div style="margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background-color: #f8f9fa;">
-                            <h4 style="color: #d9534f; margin-top: 0;">📷 失败截图信息</h4>
-                            <p><strong>截图文件:</strong> <code>{relative_path}</code></p>
-                            <p><strong>截图时间:</strong> {datetime.fromtimestamp(os.path.getmtime(screenshot_path)).strftime('%Y-%m-%d %H:%M:%S')}</p>
-                        </div>
-                        '''
-                        
-                        extras.append(pytest_html.extras.html(extra_html))
-                        
-                        # 确保extras被正确设置到report
-                        report.extras = extras
-                        print(f"📷  ✅ 截图已成功集成到HTML报告，extras数量: {len(extras)}")
-                        
-                    except ImportError:
-                        print(f"📷  ❌ 未安装pytest-html插件，无法集成截图")
-                    except Exception as e:
-                        print(f"📷  ❌ 集成截图时出错: {e}")
-                else:
-                    print(f"📷  截图路径为空或文件不存在: {screenshot_path}")
-            
-            # 从item中获取report_logger实例
-            # 如果fixture没有被使用，则会抛出异常，我们直接忽略
-            report_logger = item.funcargs.get("report_logger")
-            
-            # 只有当report_logger存在且有步骤记录时才生成报告
-            if report_logger and report_logger.steps:
-                # 生成HTML内容
-                html_content = report_logger.to_html()
-                
-                # 将HTML内容添加到报告中
-                if hasattr(report, "extra"):
-                    report.extra.append(html_content)
-                else:
-                    report.extra = [html_content]
-        except Exception as e:
-            # 添加错误处理，避免因为报告生成问题影响测试执行
-            print(f"生成详细报告时出错: {e}")
+    if report.when != "call":
+        return
+
+    try:
+        funcargs = getattr(item, "funcargs", {})
+        keywords = _get_keywords_fixture(funcargs)
+        if keywords:
+            _attach_try_failure_screenshots(report, keywords)
+
+        if report.failed:
+            screenshot_path = _resolve_failure_screenshot_path(funcargs)
+            if screenshot_path and os.path.exists(screenshot_path):
+                print(f"[REPORT] 开始集成失败截图: {screenshot_path}")
+                _append_png_extra(report, screenshot_path, "失败截图")
+                _append_html_extra(report, _build_failure_screenshot_html(screenshot_path))
+            else:
+                print(f"[REPORT] 截图路径为空或文件不存在: {screenshot_path}")
+
+        report_logger = get_report_logger(funcargs)
+        if report_logger and report_logger.steps:
+            _append_html_extra(report, report_logger.to_html())
+    except ImportError:
+        print("[REPORT] 未安装pytest-html插件，跳过HTML附件集成")
+    except Exception as error:
+        print(f"生成详细报告时出错: {error}")

@@ -14,10 +14,10 @@ class ExecutionStatus:
 
 class StatusIcons:
     """状态图标定义"""
-    SUCCESS = "✔️"    # 成功图标
-    FAILURE = "❌"    # 失败图标
-    WARNING = "⚠️"    # 警告图标
-    END = "🔚"        # 结束图标
+    SUCCESS = "[PASS]"  # 成功图标
+    FAILURE = "[FAIL]"  # 失败图标
+    WARNING = "[WARN]"  # 警告图标
+    END = "[END]"       # 结束图标
 
 class StatusMessages:
     """状态消息定义"""

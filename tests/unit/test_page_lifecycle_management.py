@@ -210,6 +210,16 @@ class TestErrorRecoveryHandler(unittest.TestCase):
         self.assertEqual(common_errors_dict.get('page_not_found'), 2)
         self.assertEqual(common_errors_dict.get('url_pattern_no_match'), 1)
 
+    def test_empty_recovery_statistics_contract(self):
+        """空历史场景也应返回完整统计字段"""
+        stats = self.error_handler.get_recovery_statistics()
+
+        self.assertEqual(stats['total'], 0)
+        self.assertEqual(stats['success_count'], 0)
+        self.assertEqual(stats['success_rate'], 0)
+        self.assertEqual(stats['common_errors'], [])
+        self.assertEqual(stats['avg_operation_time'], 0)
+
 
 class TestErrorHandlingIntegration(unittest.TestCase):
     """错误处理集成测试类"""

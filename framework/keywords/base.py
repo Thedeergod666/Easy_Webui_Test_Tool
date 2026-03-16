@@ -82,7 +82,10 @@ def _log_action(func):
             result = func(*args, **kwargs)
             # 结束记录步骤（成功）
             if is_try_execution:
-                self.report_logger.end_step('PASS', f'✅ [尝试成功] - 步骤 {step_id}')
+                self.report_logger.end_step(
+                    'PASS',
+                    format_status_message(StatusIcons.SUCCESS, StatusMessages.TRY_SUCCESS, step_id),
+                )
             else:
                 self.report_logger.end_step('PASS')
             return result
@@ -99,17 +102,22 @@ def _log_action(func):
                     if screenshots_dir and hasattr(self, 'active_page'):
                         error_path = os.path.join(screenshots_dir, f"try_error_{step_id}_{timestamp}.png")
                         self.active_page.screenshot(path=error_path, full_page=True)
-                        print(f"📷  try状态失败截图已保存至: {error_path}")
+                        print(f"[REPORT] try状态失败截图已保存至: {error_path}")
                         
                         # 将截图集成到HTML报告
                         self._integrate_screenshot_to_html_report(error_path, step_id)
                     else:
-                        print(f"📷  无法生成try状态失败截图：缺少screenshots_dir或active_page")
+                        print("[REPORT] 无法生成try状态失败截图：缺少screenshots_dir或active_page")
                 except Exception as se:
-                    print(f"📷  try状态截图失败: {se}")
+                    print(f"[REPORT] try状态截图失败: {se}")
                 
                 # 记录try状态失败但不传播异常
-                warning_msg = f"⚠️ [尝试失败-已跳过] - 步骤 {step_id}: {error_msg}"
+                warning_msg = format_status_message(
+                    StatusIcons.WARNING,
+                    StatusMessages.TRY_FAIL_SKIP,
+                    step_id,
+                    error_msg,
+                )
                 self.report_logger.end_step('SKIP', warning_msg)
                 
                 # 使用pytest.skip跳过而不是失败
@@ -206,7 +214,7 @@ class Keywords:
             # 添加HTML描述信息
             html_info = f"""
             <div style="margin: 10px 0; padding: 10px; border-left: 4px solid #ff9800; background-color: #fff3cd;">
-                <h4 style="margin: 0 0 5px 0; color: #856404;">⚠️ Try状态失败截图</h4>
+                <h4 style="margin: 0 0 5px 0; color: #856404;">Try状态失败截图</h4>
                 <p style="margin: 0; color: #856404;">步骤ID: {step_id}</p>
                 <p style="margin: 0; color: #856404;">截图时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
                 <p style="margin: 0; color: #856404;">文件路径: {screenshot_path}</p>
@@ -214,7 +222,7 @@ class Keywords:
             """
             pytest_html.extras.html(html_info)
             
-            print(f"    [HTML报告集成] Try失败截图已直接集成到HTML报告")
+            print("    [HTML报告集成] Try失败截图已集成到HTML报告")
             
         except ImportError:
             print(f"    [HTML报告集成] 未安装pytest-html插件，跳过直接集成")

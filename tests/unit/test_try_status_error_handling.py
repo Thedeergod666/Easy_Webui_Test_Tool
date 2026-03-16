@@ -78,18 +78,15 @@ class TestCodegenPrefixProcessing:
         self.mock_page = MockPage()
     
     def test_process_codegen_prefix_with_error_prefix(self):
-        """测试错误前缀的处理"""
-        # 测试page13.前缀
-        result = self.locator_mixin._process_codegen_prefix("page13.get_by_role('button', name='×')")
-        assert result == "get_by_role('button', name='×')"
-        
-        # 测试page1.前缀
-        result = self.locator_mixin._process_codegen_prefix("page1.locator('#submit')")
-        assert result == "locator('#submit')"
-        
-        # 测试page999.前缀
-        result = self.locator_mixin._process_codegen_prefix("page999.click()")
-        assert result == "click()"
+        """无效页面前缀不应被静默修复"""
+        with pytest.raises(ValueError, match="无效页面引用"):
+            self.locator_mixin._process_codegen_prefix("page13.get_by_role('button', name='×')")
+
+        with pytest.raises(ValueError, match="无效页面引用"):
+            self.locator_mixin._process_codegen_prefix("page1.locator('#submit')")
+
+        with pytest.raises(ValueError, match="无效页面引用"):
+            self.locator_mixin._process_codegen_prefix("page999.click()")
     
     def test_process_codegen_prefix_with_duplicate_prefix(self):
         """测试重复page.前缀的处理"""
@@ -118,13 +115,39 @@ class TestCodegenPrefixProcessing:
     @patch('builtins.print')
     def test_process_codegen_prefix_logging(self, mock_print):
         """测试前缀处理的日志输出"""
-        self.locator_mixin._process_codegen_prefix("page13.get_by_role('button')")
+        with pytest.raises(ValueError):
+            self.locator_mixin._process_codegen_prefix("page13.get_by_role('button')")
         
         # 验证日志输出
-        assert mock_print.call_count >= 2
+        assert mock_print.call_count >= 1
         log_calls = [call.args[0] for call in mock_print.call_args_list]
-        assert any("Codegen智能修复" in log for log in log_calls)
-        assert any("检测到错误前缀" in log for log in log_calls)
+        assert any("Codegen" in log for log in log_calls)
+        assert any("无效页面引用" in log for log in log_calls)
+
+    def test_get_locator_rejects_unsafe_get_by_role_expression(self):
+        """get_by_role 参数解析不应回退到 eval"""
+        class LocatorHarness(ElementLocatorMixin):
+            def __init__(self, page):
+                self.page = page
+
+            def _get_target_page(self, **kwargs):
+                return self.page
+
+        harness = LocatorHarness(self.mock_page)
+
+        with pytest.raises(ValueError):
+            harness._get_locator(
+                定位方式="get_by_role",
+                目标对象='"button", name=__import__("os").getcwd()',
+            )
+
+    def test_execute_safe_codegen_rejects_unsafe_argument_expression(self):
+        """codegen 参数只允许受限 AST 字面量和白名单调用"""
+        with pytest.raises(ValueError):
+            self.locator_mixin._execute_safe_codegen(
+                'locator(__import__("os").getcwd())',
+                self.mock_page,
+            )
 
 
 class TestTryStatusErrorHandling:
@@ -366,15 +389,15 @@ class TestStatusMessages:
     def test_format_status_message_basic(self):
         """测试基本状态消息格式化"""
         result = format_status_message(StatusIcons.SUCCESS, StatusMessages.PASS)
-        assert result == "✔️ 结果: [通过]"
+        assert result == "[PASS] 结果: [通过]"
         
         result = format_status_message(StatusIcons.WARNING, StatusMessages.TRY_FAIL_SKIP)
-        assert result == "⚠️ 结果: [尝试失败-已跳过]"
+        assert result == "[WARN] 结果: [尝试失败-已跳过]"
     
     def test_format_status_message_with_step_id(self):
         """测试带步骤ID的状态消息格式化"""
         result = format_status_message(StatusIcons.SUCCESS, StatusMessages.TRY_SUCCESS, "test_001")
-        assert result == "✔️ 结果: [尝试成功] - 步骤 test_001"
+        assert result == "[PASS] 结果: [尝试成功] - 步骤 test_001"
     
     def test_format_status_message_with_error(self):
         """测试带错误信息的状态消息格式化"""
@@ -384,7 +407,7 @@ class TestStatusMessages:
             "test_001", 
             "AttributeError: 'Page' object has no attribute 'page13'"
         )
-        expected = "❌ 结果: [失败] - 步骤 test_001 - AttributeError: 'Page' object has no attribute 'page13'"
+        expected = "[FAIL] 结果: [失败] - 步骤 test_001 - AttributeError: 'Page' object has no attribute 'page13'"
         assert result == expected
 
 

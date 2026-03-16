@@ -285,7 +285,13 @@ class ErrorRecoveryHandler:
     def get_recovery_statistics(self) -> Dict[str, Any]:
         """获取恢复统计信息"""
         if not self.recovery_history:
-            return {'total': 0, 'success_rate': 0, 'common_errors': []}
+            return {
+                'total': 0,
+                'success_count': 0,
+                'success_rate': 0,
+                'common_errors': [],
+                'avg_operation_time': 0,
+            }
         
         total_count = len(self.recovery_history)
         success_count = sum(1 for entry in self.recovery_history if entry['success'])
@@ -462,14 +468,14 @@ class UnifiedErrorHandlingMixin:
         """
         stats = self.error_handler.get_recovery_statistics()
         print(f"执行 [错误统计]: 当前错误处理统计")
-        print(f"  > 总处理次数: {stats['total']}")
-        print(f"  > 成功恢复次数: {stats['success_count']}")
-        print(f"  > 成功恢复率: {stats['success_rate']:.2%}")
-        print(f"  > 平均处理时间: {stats['avg_operation_time']:.3f}秒")
+        print(f"  > 总处理次数: {stats.get('total', 0)}")
+        print(f"  > 成功恢复次数: {stats.get('success_count', 0)}")
+        print(f"  > 成功恢复率: {stats.get('success_rate', 0):.2%}")
+        print(f"  > 平均处理时间: {stats.get('avg_operation_time', 0):.3f}秒")
         
-        if stats['common_errors']:
+        if stats.get('common_errors'):
             print(f"  > 常见错误类型:")
-            for error_type, count in stats['common_errors']:
+            for error_type, count in stats.get('common_errors', []):
                 print(f"    - {error_type}: {count}次")
         
         return stats
