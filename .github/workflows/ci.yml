@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一 PR 上取消上一次未完成的 run，节省 runner 时间
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ----- Job 1: 静态检查（秒级，不依赖任何东西）-----
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 安装 ruff
+        run: pip install ruff
+
+      - name: 检查代码风格
+        # 关键路径先扫，warning 级别不阻塞；想严格可加 --select=E,F
+        run: ruff check framework/ tests/
+
+  # ----- Job 2: 单元测试（Python 版本矩阵）-----
+  unit-tests:
+    name: Unit tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: 安装项目依赖
+        run: pip install -r requirements.txt
+
+      - name: 跑单元测试
+        # unit 测试基本都用 mock，不需要真浏览器；test_flows 需要 Excel+真浏览器，这里跳过
+        run: |
+          pytest tests/unit/ \
+            -v \
+            --tb=short \
+            --maxfail=10 \
+            --junitxml=reports/junit-unit-${{ matrix.python-version }}.xml
+
+      - name: 上传 JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-junit-py${{ matrix.python-version }}
+          path: reports/*.xml
+          retention-days: 7
+
+  # ----- Job 3: 冒烟（验证 main.py 的非交互式 CI 模式在云端能跑通）-----
+  # 重点证明：单机 .bat/.sh 的 init/validate 流程，云端 GitHub runner 也能复现。
+  smoke:
+    name: Smoke test (CLI non-interactive)
+    runs-on: ubuntu-latest
+    needs: [unit-tests]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      # 缓存 Playwright 浏览器（~300MB），避免每次重下
+      - name: 缓存 Playwright 浏览器
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: 安装项目依赖
+        run: pip install -r requirements.txt
+
+      # ⚠️ --with-deps 是 Linux runner 上 Playwright 启动的前提，否则报缺 libnss3 等系统库
+      - name: 安装 Chromium + 系统依赖
+        run: python -m playwright install --with-deps chromium
+
+      # test_data/* 被 .gitignore 排除，CI 里自己造一份 headless 配置
+      - name: 准备 CI 测试数据
+        run: |
+          mkdir -p test_data
+          cp ci_fixtures/test_config.json test_data/test_config.json
+
+      # 步骤 A: init — 等价于 main.sh init，证明非交互式初始化链路通
+      - name: init 模式冒烟
+        # 在临时目录跑，避免污染当前 test_data
+        run: |
+          rm -rf /tmp/ewtt-smoke && mkdir -p /tmp/ewtt-smoke
+          cd /tmp/ewtt-smoke
+          python -c "
+          import sys; sys.path.insert(0, '${{ github.workspace }}')
+          from framework.utils.config_workflow import initialize_test_config
+          result = initialize_test_config('/tmp/ewtt-smoke')
+          print(f'init exit_code: {result.exit_code}')
+          if result.exit_code != 0:
+              sys.exit(1)
+          "
+
+      # 步骤 B: validate — 等价于 main.sh validate，证明非交互式校验链路通
+      - name: validate 模式冒烟
+        run: |
+          python framework/utils/main.py validate
+
+      - name: 上传 smoke 日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs
+          path: reports/
+          retention-days: 14

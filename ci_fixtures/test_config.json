@@ -1,0 +1,8 @@
+{
+  "_comment": "CI 专用配置——强制 headless 模式（CI runner 无显示设备），最小可跑配置。任何 CI 修改请只动 visual_mode 字段，test_flows 留空数组避免 CI 去找真实 Excel。",
+  "visual_mode": {
+    "headed": false,
+    "slow_mo": 0
+  },
+  "test_flows": []
+}

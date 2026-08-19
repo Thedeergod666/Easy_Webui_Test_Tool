@@ -1,4 +1,8 @@
 # WEBUI自动化测试框架使用指南
+
+[![CI](https://github.com/Thedeergod666/Easy_Webui_Test_Tool/actions/workflows/ci.yml/badge.svg)](https://github.com/Thedeergod666/Easy_Webui_Test_Tool/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+
 这是一个基于 [Playwright](https://playwright.dev/python/) 和 [Pytest](https://docs.pytest.org/) 构建的 **关键字+数据驱动的 Web UI 自动化测试框架**。
 其核心目标是通过简洁的 Excel 表格来管理和执行复杂的 Web UI 测试流程，适用于各类平台的回归和冒烟测试，显著降低自动化测试的门槛和维护成本。
 中文wiki：
