@@ -14,7 +14,7 @@ pandas==2.3.1
 Pillow==11.3.0
 playwright==1.53.0
 pluggy==1.6.0
-pyee==13.0.0
+pyee==14.0.0
 Pygments==2.19.2
 pytest==8.4.1
 pytest-base-url==2.1.0
